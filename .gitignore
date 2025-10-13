@@ -1,0 +1,5 @@
+**/__pycache__/
+exps/*
+!exps/.gitkeep
+data/datasets/*
+!data/datasets/.gitkeep
