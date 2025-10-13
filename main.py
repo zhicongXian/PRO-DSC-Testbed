@@ -40,9 +40,9 @@ parser.add_argument('--z_dim', type=int, default=128,
                     help='dimension of the learned representation')
 parser.add_argument('--n_clusters', type=int, default=10,
                     help='number of subspaces to cluster')
-parser.add_argument('--epo', type=int, default=15,
+parser.add_argument('--epo', type=int, default=5000,
                     help='number of epochs for training')
-parser.add_argument('--bs', type=int, default=32,
+parser.add_argument('--bs', type=int, default=128,
                     help='input batch size for training')
 parser.add_argument('--lr', type=float, default=1e-4,
                     help='learning rate (default: 0.0001)')

@@ -3,3 +3,5 @@ exps/*
 !exps/.gitkeep
 data/datasets/*
 !data/datasets/.gitkeep
+pro_cifar_100_out.txt
+pro_cifar_100.txt
