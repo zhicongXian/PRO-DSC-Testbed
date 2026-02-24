@@ -1,31 +1,5 @@
 import os
 import sys
-import math
-import torch.nn.functional as F
-from distributed.utils_test import double
-import  jax.scipy as jsc
-import  jax.numpy as jnp
-import numpy as np
-def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
-    # q, r, p = sla.qr(a, mode="economic", pivoting=True)
-    q, r = jnp.linalg.qr(a, mode="reduced")
-
-    r_take = np.any(np.abs(r) > tol, axis=1)
-    r = r[r_take, ::]
-    q = q[::, r_take]
-
-    return (
-        q@ np.asarray(jsc.linalg.solve(
-            a=r @ r.T,
-            b=r,
-            assume_a="pos",
-            check_finite=False,
-            overwrite_a=True,
-            overwrite_b=True,
-        ))
-    ).T  # [np.argsort(p), ::]
-
-
 sys.path.append('./')
 
 from datetime import datetime
@@ -40,10 +14,9 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.model_with_transformer_encoder import PRO_DSC_Transformer
 from model.model import PRO_DSC
 from model.sink_distance import SinkhornDistance
-from data.data_utils import FeatureDatasetWithIDs, FeatureDataset
+from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
 from metrics.clustering import spectral_clustering_metrics
@@ -54,7 +27,7 @@ parser.add_argument('--desc', type=str, default='exp',
 
 parser.add_argument('--data', type=str, default='cifar100',
                     help='dataset to use')
-parser.add_argument('--gamma', type=float, default=100,
+parser.add_argument('--gamma', type=int, default=100, 
                     help='coeff for expr loss')
 parser.add_argument('--beta', type=int, default=100, 
                     help='coeff for block prior loss')
@@ -67,9 +40,9 @@ parser.add_argument('--z_dim', type=int, default=128,
                     help='dimension of the learned representation')
 parser.add_argument('--n_clusters', type=int, default=10,
                     help='number of subspaces to cluster')
-parser.add_argument('--epo', type=int, default=15,
+parser.add_argument('--epo', type=int, default=5000,
                     help='number of epochs for training')
-parser.add_argument('--bs', type=int, default=32,
+parser.add_argument('--bs', type=int, default=128,
                     help='input batch size for training')
 parser.add_argument('--lr', type=float, default=1e-4,
                     help='learning rate (default: 0.0001)')
@@ -94,50 +67,10 @@ parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
-parser.add_argument('--quantile_prob', type=float, default=0.99)
-
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
-
-import torch
-
-def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
-    """
-    Solve min_C ||X - X C||_F^2  s.t. diag(C)=0, by column-wise least squares.
-
-    Args:
-        X: (d, n) tensor (float32/float64), columns are data points.
-
-    Returns:
-        C: (n, n) tensor with diag(C)=0.
-    """
-    if X.dim() != 2:
-        raise ValueError("X must be a 2D tensor of shape (d, n).")
-    d, n = X.shape
-    device, dtype = X.device, X.dtype
-
-    C = torch.zeros((n, n), device=device, dtype=dtype)
-
-    # Precompute a mask template to select all columns except i
-    for i in range(n):
-        mask = torch.ones(n, device=device, dtype=torch.bool)
-        mask[i] = False
-
-        X_ni = X[:, mask]          # (d, n-1)
-        x_i = X[:, i]              # (d,)
-
-        # Solve min ||X_ni c - x_i||_2  (PyTorch returns (n-1, 1))
-        sol = torch.linalg.lstsq(X_ni, x_i.unsqueeze(1)).solution.squeeze(1)  # (n-1,)
-
-        # Insert into column i, skipping row i
-        C[mask, i] = sol
-
-    # Ensure exact zero diagonal
-    C.fill_diagonal_(0.0)
-    return C
-
 
 # parse configurations from yaml
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
@@ -154,7 +87,6 @@ writer = init_pipeline(dir_name, args)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
 sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
-quantile_prob = args.quantile_prob
 
 # Loading features and labels
 if args.data.lower() in ['cifar10','cifar100','cifar20']:
@@ -166,8 +98,6 @@ if args.data.lower() in ['cifar10','cifar100','cifar20']:
     clip_features_test = feature_dict['features'][-10000:]
     clip_labels_test = feature_dict['ys'][-10000:]
 
-    train_ids = np.arange(len(clip_labels))
-
     if args.data.lower() == 'cifar20':
         from data.dataset import sparse2coarse
         clip_labels = torch.from_numpy(sparse2coarse(clip_labels))
@@ -176,13 +106,13 @@ else:
     feature_dict = torch.load(args.data_dir)
     clip_features = feature_dict['features']
     clip_labels = feature_dict['ys']
-    train_ids = np.arange(len(clip_labels))
+
     feature_dict = torch.load(args.data_dir_val)
     clip_features_test = feature_dict['features']
     clip_labels_test = feature_dict['ys']
 
 #### construct dataloader for batch training  
-clip_feature_set = FeatureDatasetWithIDs(clip_features, clip_labels, train_ids)
+clip_feature_set = FeatureDataset(clip_features, clip_labels)
 train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
 test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False)
@@ -200,10 +130,7 @@ scaler = GradScaler()
 ### warmup iteration setting 
 total_wamup_steps = args.warmup
 warmup_step = 0
-gamma_estimated_list = []
-# calculate the number of steps per epoch:
-candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(device)
-nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
+
 with tqdm(total=args.epo) as progress_bar:
     for epoch in range(args.epo):
         progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
@@ -211,54 +138,9 @@ with tqdm(total=args.epo) as progress_bar:
         ### learning loss storage 
         loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
 
-        for step, (x, y, id_num) in enumerate(train_loader):
-
-            x, y, id_num = x.float().to(device), y.to(device), id_num.long().to(device)
+        for step, (x, y) in enumerate(train_loader):
+            x, y = x.float().to(device), y.to(device)
             y_np = y.detach().cpu().numpy()
-
-            ############## calculate the pairwise cosine similarities between the data:
-            pairwise_dist = torch.mm(x / torch.linalg.norm(x, axis=1, keepdims=True),
-                                            (x / torch.linalg.norm(
-                                                x, axis=1, keepdims=True)).T).abs()
-            pairwise_dist = pairwise_dist - torch.diag(torch.diag(pairwise_dist)) # remove the pairwise similarity
-            # calculate the ranking
-            weights = torch.zeros_like(pairwise_dist)
-            if epoch == 0:
-                softmax = F.softmax(pairwise_dist.float(), dim=1)
-                prob_threshold = torch.quantile(softmax, quantile_prob, dim=1)
-                pairwise_dist_mask = softmax.ge(
-                    torch.repeat_interleave(prob_threshold[:, None], pairwise_dist.shape[1],
-                                            dim=1)).bool()  # Output bit mask, when for a given block sample, its pairwise distance larger than prob_threshold
-
-
-
-                non_zero_mask = pairwise_dist_mask
-                count_non_zero = non_zero_mask.sum(dim=1)
-
-                # 4. Ensure the denominator is at least 1 to avoid division by zero
-                #    This is important if a row/column is all zeros.
-                safe_count = count_non_zero.clamp(min=1)
-
-                # 5. Calculate the average of non-zero values
-                avg_non_zero = sum(count_non_zero) / len(
-                    count_non_zero)  # .float() for float division
-                quantile_dist = torch.where(non_zero_mask, pairwise_dist, 1)
-
-                candidate_quantile[id_num] = torch.where(
-                    candidate_quantile[id_num].le(quantile_dist.min(0)[0]),
-                    quantile_dist.min(0)[0], candidate_quantile[id_num])
-            else:
-
-
-                decrease_delta_1 = torch.where(pairwise_dist.ge(
-                    torch.repeat_interleave(candidate_quantile[None, id_num], pairwise_dist.shape[0],
-                                            dim=0)), pairwise_dist, torch.zeros_like(pairwise_dist))
-                # decrease_delta_2 = torch.where(abs_latent_dist.ge(
-                #     torch.repeat_interleave(last_layer_sim_candidate_quantile[None, block_id], abs_latent_dist.shape[0],
-                #                             dim=0)), abs_latent_dist,  torch.zeros_like(c))
-                weights =   decrease_delta_1  # decrease_delta_2*decrease_delta_1
-
-
             with autocast(enabled=True):
                 z, logits = model(x)
                 self_coeff = (logits @ logits.T)
@@ -274,22 +156,13 @@ with tqdm(total=args.epo) as progress_bar:
             
                 ### compute the affinity matrix 
                 A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-
-                # d =A.sum(1)
                 A_np = A.detach().cpu().numpy()
                 ### compute W for BDR
                 L = torch.diag(A.sum(1)) - A
-
-
-
-                # D_inv_sqrt = np.diag(1.0 / np.sqrt(d + 1e-7))
-                # L = D_inv_sqrt @ L @ D_inv_sqrt
                 with torch.no_grad():
-                    _, U = torch.linalg.eigh(L) # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                    U_hat = U[:, :args.n_clusters] # U is the eigenvectors
-                    W = U_hat @ U_hat.T # L is a square matrix again
-
-
+                    _, U = torch.linalg.eigh(L)
+                    U_hat = U[:, :args.n_clusters]
+                    W = U_hat @ U_hat.T
                 
                 if warmup_step <= total_wamup_steps:
                     loss = warmup_criterion(z)
@@ -298,41 +171,7 @@ with tqdm(total=args.epo) as progress_bar:
                     loss_tcr = warmup_criterion(z) # logdet() loss
                     loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                     loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
-                    # # here you can add your initial estimates for Z and for C. and subsequently update!
-                    if warmup_step> total_wamup_steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch and warmup_step!=-1: # no initial pretraining is used:
-
-                        block = z.detach().clone().double()
-
-                        approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                        c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                approx_pseudo)
-                        c_matrix = torch.from_numpy(c_matrix)
-
-                        # c_matrix = self_representation_ls(block.T)
-                        # c_matrix = block @ (
-                        #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                        L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                        _, c_u = torch.linalg.eigh(
-                            c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                        c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                        c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
-
-                        gamma_estimated =3* 1/ (torch.trace(L_c.T @ c_W)/args.bs) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                        gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
-
-                    if warmup_step>= total_wamup_steps + nb_steps_per_epoch + 1 and warmup_step!=-1:# epoch > 0:
-                        gamma = np.mean(np.array(gamma_estimated_list))
-                        if epoch > total_wamup_steps // nb_steps_per_epoch + 1:
-                            M = L.T @ W
-                            pairwise_eigenspace_dist = torch.cdist(M, M)
-                            loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
-                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
-                        else:
-                            loss = loss_tcr + gamma * loss_exp + args.beta  * loss_bl
-                    else:
-                        loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-                    if  warmup_step == total_wamup_steps + nb_steps_per_epoch +  1 and warmup_step!=-1:
-                        print(f"estimated gamma {gamma }, default gamma is {args.gamma}")
+                    loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
 
                     loss_dict['loss_TCR'].append(loss_tcr.item())
                     loss_dict['loss_Exp'].append(loss_exp.item())

@@ -13,7 +13,9 @@ class TotalCodingRate(nn.Module):
         p, m = W.shape  #[d, B]
         I = torch.eye(p,device=W.device)
         scalar = p / (m * self.eps)
-        logdet = torch.logdet(I + scalar * W.matmul(W.T))
+        sign, logdet =  torch.linalg.slogdet(I + scalar * W.matmul(W.T)) #torch.logdet(I + scalar * W.matmul(W.T))
+        if sign <= 0:
+            print("Matrix not positive definite!")
         return logdet / 2.
     
     def forward(self,X):

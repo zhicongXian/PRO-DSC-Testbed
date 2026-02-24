@@ -299,7 +299,7 @@ with tqdm(total=args.epo) as progress_bar:
                     loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                     loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                     # # here you can add your initial estimates for Z and for C. and subsequently update!
-                    if warmup_step> total_wamup_steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch and warmup_step!=-1: # no initial pretraining is used:
+                    if warmup_step> total_wamup_steps  and warmup_step!=-1: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
 
                         block = z.detach().clone().double()
 
@@ -320,13 +320,15 @@ with tqdm(total=args.epo) as progress_bar:
                         gamma_estimated =3* 1/ (torch.trace(L_c.T @ c_W)/args.bs) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                         gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
 
-                    if warmup_step>= total_wamup_steps + nb_steps_per_epoch + 1 and warmup_step!=-1:# epoch > 0:
+                    if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:
                         gamma = np.mean(np.array(gamma_estimated_list))
+                        gamma_estimated_list = []
                         if epoch > total_wamup_steps // nb_steps_per_epoch + 1:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
                             loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
                             loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
+                            print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
                         else:
                             loss = loss_tcr + gamma * loss_exp + args.beta  * loss_bl
                     else:
