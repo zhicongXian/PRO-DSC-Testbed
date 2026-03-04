@@ -14,13 +14,15 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.model import PRO_DSC, PRO_DSC_Image
+from model.model import PRO_DSC, PRO_DSC_Image, DSCNet
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
 from metrics.clustering import spectral_clustering_metrics
 import torch.nn.functional as F
+import scipy.io as sio
+
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -68,16 +70,23 @@ parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
+parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','coil100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
-with open(os.path.join('configs','{}_2.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
-    yaml_data = yaml.safe_load(file)
-    for key, value in yaml_data.items():
-        setattr(args, key, value)
+if args.load_pretrain:
+    with open(os.path.join('configs', '{}_2_load_pretrain.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+        yaml_data = yaml.safe_load(file)
+        for key, value in yaml_data.items():
+            setattr(args, key, value)
+else:
+    with open(os.path.join('configs','{}_2.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+        yaml_data = yaml.safe_load(file)
+        for key, value in yaml_data.items():
+            setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
 print(args)
@@ -105,20 +114,62 @@ if args.data.lower() in ['cifar10','cifar100','cifar20']:
     model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 elif args.data.lower() == "coil100":
-    with open(args.data_dir, 'rb') as f:
-        feature_dict = np.load(f,allow_pickle=True)
+    if args.load_pretrain:
+        data = sio.loadmat(args.data_dir)
+        x, y = data['fea'].reshape((-1, 1, 32, 32)), data['gnd'] # he has another parameter setting than the original dataset 128 x 128 x3
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
 
-        clip_features = feature_dict["images"] # [n_data, 128, 128, 3]
-        clip_features = np.transpose(clip_features, (0, 3, 1, 2)) # by default pytorch conv2d is channel first, therefore, we need to transponse
+        # network and optimization parameters
+        num_sample = x.shape[0]
+        channels = [1, 50] # input channels 1, output channels 50
+        kernels = [5]
+        epochs = 120
+        weight_coef = 1.0
+        weight_selfExp = 15
+        clip_features = x
+        clip_labels = y
+        clip_labels_test = y
+        clip_features_test = x
 
-        clip_features_test = clip_features
 
-        clip_labels = feature_dict["labels"]
-        clip_labels = clip_labels-np.min(clip_labels)
+        dscnet = DSCNet(num_sample=num_sample, channels=args.channels, kernels=args.kernels)
+        dscnet.to(device)
 
-        clip_labels_test = clip_labels
-    model = PRO_DSC_Image(input_dim=32*32, hidden_dim=args.hidden_dim, z_dim=args.z_dim, ae_channels=args.channels, ae_kernels= args.kernels).to(device)  # input_dim=768
-    sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+        # load the pretrained weights which are provided by the original author in
+        # https://github.com/panji1990/Deep-subspace-clustering-networks
+        ae_state_dict = torch.load('data/datasets/pretrained_weights_original/%s.pkl' % args.data.lower())
+
+        dscnet.ae.load_state_dict(ae_state_dict)
+        print("Pretrained ae weights are loaded successfully.")
+
+        model = PRO_DSC_Image(input_dim=32 * 32, hidden_dim=args.hidden_dim, z_dim=args.z_dim,
+                              ae_channels=args.channels, ae_kernels=args.kernels).to(device)  # input_dim=768
+        sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+        # weight transfer:
+        # this works, but could be dangerous, if you are not careful
+        model.load_state_dict(dscnet.state_dict(), strict=False)
+        # > _IncompatibleKeys(missing_keys=['new_layer.weight', 'new_layer.bias'], unexpected_keys=[])
+
+        # check
+        print("Checking if the feature extraction parameters identical",(share_parameters(model.ae, dscnet.ae)))
+
+    else:
+        with open(args.data_dir, 'rb') as f:
+            feature_dict = np.load(f,allow_pickle=True)
+
+            clip_features = feature_dict["images"] # [n_data, 128, 128, 3]
+            clip_features = np.transpose(clip_features, (0, 3, 1, 2)) # by default pytorch conv2d is channel first, therefore, we need to transponse
+
+            clip_features_test = clip_features
+
+            clip_labels = feature_dict["labels"]
+            clip_labels = clip_labels-np.min(clip_labels)
+
+            clip_labels_test = clip_labels
+        model = PRO_DSC_Image(input_dim=32*32, hidden_dim=args.hidden_dim, z_dim=args.z_dim, ae_channels=args.channels, ae_kernels= args.kernels).to(device)  # input_dim=768
+        sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+
+
 
 else:
     feature_dict = torch.load(args.data_dir)
@@ -161,7 +212,7 @@ if args.data.lower() == "coil100":
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
-            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
+            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': [], 'loss_ae':[]}
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -215,7 +266,7 @@ if args.data.lower() == "coil100":
 
                             # save the pretrained model:
 
-                            torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
+                            torch.save(model.state_dict(), '{}/checkpoints/model_pretrain{}.pt'.format(dir_name, epoch))
                             # I need to freeze the feature extraction layers
 
 
@@ -224,16 +275,28 @@ if args.data.lower() == "coil100":
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                         loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                        loss_ae = F.mse_loss(x_recon, x, reduction='mean')
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
+                        loss_dict['loss_ae'].append(loss_ae.item())
 
                 if epoch <= total_wamup_epochs:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
+                elif epoch == total_wamup_epochs+1:
+                    # freeze the autoencoder weights:
+                    for p in model.ae.parameters():
+                        p.requires_grad = False
+                    # and then perform backprop:
+                    optimizer.zero_grad()
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+
                 else:
                     optimizer.zero_grad()
                     optimizerc.zero_grad()
@@ -253,6 +316,7 @@ if args.data.lower() == "coil100":
                         tcr_loss="{:5.4f}".format(loss_tcr.item()),
                         exp_loss="{:5.4f}".format(loss_exp.item()),
                         block_loss="{:5.4f}".format(loss_bl.item()),
+                        ae_loss="{:5.4f}".format(loss_ae.item())
                     )
                 warmup_step += 1
             progress_bar.update(1)
@@ -294,6 +358,9 @@ if args.data.lower() == "coil100":
                                                                                             np.mean(nmi_lst), np.max(nmi_lst),epoch))
                     if previous_nmi is None:
                         previous_nmi = np.mean(nmi_lst)
+                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+
+                    # serialize this into a pandas dataframe:

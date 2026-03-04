@@ -4,7 +4,7 @@ import json
 import random
 import numpy as np
 import torch
-
+import torch.nn as nn
 def update_pi_from_z(net):
     import copy
     model_dict = net.state_dict()
@@ -61,3 +61,19 @@ def save_params(model_dir, params):
     path = os.path.join(model_dir, 'params.json')
     with open(path, 'w') as f:
         json.dump(params, f, indent=2, sort_keys=True)
+
+def share_parameters(m1: nn.Module, m2: nn.Module):
+    for (n1, p1), (n2, p2) in zip(m1.named_parameters(), m2.named_parameters()):
+        if not (p1==p2).all().item():
+            return False
+    return True
+
+def same_seeds(seed):
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True

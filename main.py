@@ -152,7 +152,7 @@ with tqdm(total=args.epo) as progress_bar:
                 Pi = Pi * Pi.shape[-1]
                 self_coeff = Pi[0]
                 # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
+                self_coeff = self_coeff - torch.diag(torch.diag(self_coeff)) # here he also does this!
             
                 ### compute the affinity matrix 
                 A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)

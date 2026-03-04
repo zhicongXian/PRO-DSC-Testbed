@@ -7,3 +7,6 @@ pro_cifar_100_out.txt
 pro_cifar_100.txt
 pro_coil.txt
 pro_coil_out.txt
+results/*
+subspace_coil.txt
+subspace_coil_out.txt
