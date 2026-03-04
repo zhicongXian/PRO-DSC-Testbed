@@ -14,7 +14,7 @@ nvidia-smi
 env
 
 # venv
-source /home/wiss/xian/venvs/subspace_clustering_env/bin/activate
+source /home/wiss/xian/venvs/subspace_clustering_3_12/bin/activate
 export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
