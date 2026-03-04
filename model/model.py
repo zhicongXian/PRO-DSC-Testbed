@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import torch
 
 class PRO_DSC(nn.Module):
     def __init__(self,input_dim, hidden_dim, z_dim):
@@ -159,8 +160,44 @@ class PRO_DSC_Image(nn.Module):
         Z = self.subspace(z)
         logits = self.cluster(z).float()
         Z = F.normalize(Z, 2)
-        logits = F.normalize(logits, 2)
+        logits = F.normalize(logits, 2) # this is why it also affects the reconstruction
         z_recon_reshape = Z.view(shape)
-        x_recon = self.ae.decoder(z_recon_reshape)  # shape=[n, c, w, h]
+        x_recon = self.ae.decoder(pre_feature)  # shape=[n, c, w, h]
 
         return Z, logits, x_recon
+
+class SelfExpression(nn.Module):
+    def __init__(self, n):
+        super(SelfExpression, self).__init__()
+        self.Coefficient = nn.Parameter(1.0e-8 * torch.ones(n, n, dtype=torch.float32), requires_grad=True)
+
+    def forward(self, x):  # shape=[n, d]
+        y = torch.matmul(self.Coefficient, x)
+        return y
+
+class DSCNet(nn.Module):
+    def __init__(self, channels, kernels, num_sample):
+        super(DSCNet, self).__init__()
+        self.n = num_sample
+        self.ae = ConvAE(channels, kernels)
+        self.self_expression = SelfExpression(self.n)
+
+    def forward(self, x):  # shape=[n, c, w, h]
+        z = self.ae.encoder(x)
+
+        # self expression layer, reshape to vectors, multiply Coefficient, then reshape back
+        shape = z.shape
+        z = z.view(self.n, -1)  # shape=[n, d]
+        z_recon = self.self_expression(z)  # shape=[n, d]
+        z_recon_reshape = z_recon.view(shape)
+
+        x_recon = self.ae.decoder(z_recon_reshape)  # shape=[n, c, w, h]
+        return x_recon, z, z_recon
+
+    def loss_fn(self, x, x_recon, z, z_recon, weight_coef, weight_selfExp):
+        loss_ae = F.mse_loss(x_recon, x, reduction='sum')
+        loss_coef = torch.sum(torch.pow(self.self_expression.Coefficient, 2))
+        loss_selfExp = F.mse_loss(z_recon, z, reduction='sum')
+        loss = loss_ae + weight_coef * loss_coef + weight_selfExp * loss_selfExp
+
+        return loss
