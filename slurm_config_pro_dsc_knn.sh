@@ -19,4 +19,4 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main.py --epo=5000 >> pro_cifar_100_out.txt
+python3 ./main_knn_enhanced_cont.py --data=cifar10-mcr --epo=5000 >> pro_cifar_100_out.txt
