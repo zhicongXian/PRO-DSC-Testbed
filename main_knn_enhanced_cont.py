@@ -37,7 +37,8 @@ import yaml
 import torch
 import numpy as np
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
+from torch.amp import autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from model.model_with_transformer_encoder import PRO_DSC_Transformer
@@ -285,7 +286,7 @@ for seed in args.seeds:
                     weights =   decrease_delta_1  # decrease_delta_2*decrease_delta_1
 
 
-                with autocast(enabled=True):
+                with autocast(enabled=True,device_type="cuda"):
                     z, logits = model(x)
                     self_coeff = (logits @ logits.T)
                     Sign_self_coeff = torch.sign(self_coeff)
