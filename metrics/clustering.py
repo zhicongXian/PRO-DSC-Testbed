@@ -74,8 +74,10 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
         vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass+extra_dim,
                                     sigma=None,  which='LA', tol=tol)
     elif solver_type=='lm':
+        k = nclass+extra_dim
+
         vals, embedding = scipy.sparse.linalg.eigsh(
-            2*scipy.sparse.identity(lap.shape[0])-lap,
+            2*scipy.sparse.identity(lap.shape[0])-lap, ncv = max(2 * k + 1, 50),
             k=nclass+extra_dim, sigma=None,  which='LM', tol=tol)
     else:
         raise ValueError('invalid solver')
