@@ -246,9 +246,9 @@ if args.data.lower() == "coil100":
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_ae = F.mse_loss(x_recon, x, reduction='mean')
                         if epoch == 0:
-                            loss = loss_tcr + loss_ae
+                            loss = 0.01*loss_tcr + loss_ae
                         else:
-                            loss = 0.0*loss + loss_ae
+                            loss = 0.01*loss_tcr + loss_ae
 
                     else:
                         if epoch == total_wamup_epochs + 1:
@@ -331,7 +331,7 @@ if args.data.lower() == "coil100":
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+            if epoch > total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
