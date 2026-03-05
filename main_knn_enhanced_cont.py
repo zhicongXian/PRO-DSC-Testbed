@@ -182,12 +182,12 @@ elif args.data.lower() == "cifar10-mcr":
 
         with open('data/datasets/CIFAR10-MCR2/cifar10-features.npy', 'rb') as f:
             full_samples = np.load(f)
-            clip_features = full_samples
-            clip_features_test = full_samples
+            clip_features = full_samples[:50000]
+            clip_features_test = full_samples[-10000:]
         with open('data/datasets/CIFAR10-MCR2/cifar10-labels.npy', 'rb') as f:
             full_labels = np.load(f)
-            clip_labels = full_labels
-            clip_labels_test = full_labels
+            clip_labels = full_labels[:50000]
+            clip_labels_test = full_labels[-10000:]
         train_ids = np.arange(len(clip_labels))
 
 else:
