@@ -198,7 +198,8 @@ if args.data.lower() == "coil100":
                                                                                    model.subspace.parameters() if
                                                                                    p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
-    optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
+    optimizer = optim.Adam(param_list, lr=args.lr)
+    # optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
     optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
     scaler = GradScaler()
 
