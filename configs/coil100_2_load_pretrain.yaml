@@ -14,3 +14,4 @@ channels: [1, 50]
 kernels: [5]
 output_file: ./data/datasets/coil100_dsc_pretrain_loaded.pkl
 experiment_name: coil100_subspace_pretrain_features
+

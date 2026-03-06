@@ -74,6 +74,7 @@ parser.add_argument('--validate_every', type=int, default=25,
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 parser.add_argument('--seeds', type=int, default=[1,2],
                     help='seeds')
+parser.add_argument('--out_dir', type=str, default="results")
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','coil100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
