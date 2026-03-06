@@ -8,8 +8,10 @@ epo: 10000
 lr: 1.e-4
 eps: 0.05
 data_dir: ./data/datasets/coil100.pkl
-warmup: 2000
+warmup: 10
 save_every: 5000
 channels: [3,1024, 1]
 kernels: [5,5,5]
 output_file: ./data/datasets/coil100_dsc_pretrain.pkl
+validate_every: 2
+experiment_name: raw_coil_pro

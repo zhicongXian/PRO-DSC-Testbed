@@ -490,9 +490,11 @@ for seed in args.seeds:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-
+                        gamma_before = gamma / 300
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'acc': np.mean(acc_lst),
+                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
+                              'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
+                              'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               }])])
 

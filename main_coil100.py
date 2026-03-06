@@ -3,6 +3,7 @@ import sys
 sys.path.append('./')
 import pickle
 from datetime import datetime
+import pandas as pd
 current_date = datetime.now()
 formatted_date = current_date.strftime('%m-%d')
 
@@ -71,6 +72,8 @@ parser.add_argument('--save_every', type=int, default=50,
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
+parser.add_argument('--seeds', type=int, default=[1,2],
+                    help='seeds')
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','coil100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
@@ -191,6 +194,7 @@ test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True
 warmup_criterion = TotalCodingRate(eps=args.eps)
 
 previous_nmi = None
+result_df = pd.DataFrame()
 
 if args.data.lower() == "coil100":
     ### optimizer
@@ -208,160 +212,185 @@ if args.data.lower() == "coil100":
     warmup_step = 0
     ae_z = []
     ys = []
-    with tqdm(total=args.epo) as progress_bar:
-        for epoch in range(args.epo):
-            progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
-            model.train()
-            ### learning loss storage
-            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': [], 'loss_ae':[]}
+    for seed in args.seeds:
+        same_seeds(seed)
+        previous_nmi = None
+        with tqdm(total=args.epo) as progress_bar:
+            for epoch in range(args.epo):
+                progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
+                model.train()
+                ### learning loss storage
+                loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': [], 'loss_ae':[]}
 
-            for step, (x, y) in enumerate(train_loader):
-                x, y = x.float().to(device), y.to(device)
-                y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
-                    z, logits, x_recon = model(x)
-                    self_coeff = (logits @ logits.T)
-                    Sign_self_coeff = torch.sign(self_coeff)
+                for step, (x, y) in enumerate(train_loader):
+                    x, y = x.float().to(device), y.to(device)
+                    y_np = y.detach().cpu().numpy()
+                    with autocast(enabled=True):
+                        z, logits, x_recon = model(x)
+                        self_coeff = (logits @ logits.T)
+                        Sign_self_coeff = torch.sign(self_coeff)
 
-                    ### Sinkhorn projection
-                    self_coeff = self_coeff.abs().unsqueeze(0)
-                    Pi = sink_layer(self_coeff)[0]
-                    Pi = Pi * Pi.shape[-1]
-                    self_coeff = Pi[0]
-                    # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
+                        ### Sinkhorn projection
+                        self_coeff = self_coeff.abs().unsqueeze(0)
+                        Pi = sink_layer(self_coeff)[0]
+                        Pi = Pi * Pi.shape[-1]
+                        self_coeff = Pi[0]
+                        # eliminate the diagonal value of self_coeff, which fits the constraint of C
+                        self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
 
-                    ### compute the affinity matrix
-                    A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                    A_np = A.detach().cpu().numpy()
-                    ### compute W for BDR
-                    L = torch.diag(A.sum(1)) - A
-                    with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
-                        U_hat = U[:, :args.n_clusters]
-                        W = U_hat @ U_hat.T
+                        ### compute the affinity matrix
+                        A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
+                        A_np = A.detach().cpu().numpy()
+                        ### compute W for BDR
+                        L = torch.diag(A.sum(1)) - A
+                        with torch.no_grad():
+                            _, U = torch.linalg.eigh(L)
+                            U_hat = U[:, :args.n_clusters]
+                            W = U_hat @ U_hat.T
+
+                        if epoch <= total_wamup_epochs:
+                            loss = warmup_criterion(z)
+                            loss_tcr = loss
+                            loss_dict['loss_TCR'].append(loss_tcr.item())
+                            loss_ae = F.mse_loss(x_recon, x, reduction='mean')
+                            if epoch == 0:
+                                loss = 0.01*loss_tcr + loss_ae
+                            else:
+                                loss = 0.01*loss_tcr + loss_ae
+
+                        else:
+                            if epoch == total_wamup_epochs + 1:
+                                ae_z.append(z.detach().cpu().numpy())
+                                ys.append(y_np)
+                            elif epoch == total_wamup_epochs+2:
+                                # start serializing files:
+                                images = np.concatenate(ae_z)
+                                labels = np.concatenate(ys)
+                                with open(args.output_file, "wb") as f:
+                                    pickle.dump({
+                                        "images": images,
+                                        "labels": labels
+                                    }, f)
+
+                                # save the pretrained model:
+
+                                torch.save(model.state_dict(), '{}/checkpoints/model_pretrain{}.pt'.format(dir_name, epoch))
+                                # I need to freeze the feature extraction layers
+
+
+                            # collect the z values and save to a file
+                            loss_tcr = warmup_criterion(z) # logdet() loss
+                            loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
+                            loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
+                            loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                            loss_ae = F.mse_loss(x_recon, x, reduction='mean')
+
+                            loss_dict['loss_TCR'].append(loss_tcr.item())
+                            loss_dict['loss_Exp'].append(loss_exp.item())
+                            loss_dict['loss_Block'].append(loss_bl.item())
+                            loss_dict['loss_ae'].append(loss_ae.item())
 
                     if epoch <= total_wamup_epochs:
-                        loss = warmup_criterion(z)
-                        loss_tcr = loss
-                        loss_dict['loss_TCR'].append(loss_tcr.item())
-                        loss_ae = F.mse_loss(x_recon, x, reduction='mean')
-                        if epoch == 0:
-                            loss = 0.01*loss_tcr + loss_ae
-                        else:
-                            loss = 0.01*loss_tcr + loss_ae
+                        optimizer.zero_grad()
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
+                    elif epoch == total_wamup_epochs+1:
+                        # freeze the autoencoder weights:
+                        for p in model.ae.parameters():
+                            p.requires_grad = False
+                        # and then perform backprop:
+                        optimizer.zero_grad()
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
 
                     else:
-                        if epoch == total_wamup_epochs + 1:
-                            ae_z.append(z.detach().cpu().numpy())
-                            ys.append(y_np)
-                        elif epoch == total_wamup_epochs+2:
-                            # start serializing files:
-                            images = np.concatenate(ae_z)
-                            labels = np.concatenate(ys)
-                            with open(args.output_file, "wb") as f:
-                                pickle.dump({
-                                    "images": images,
-                                    "labels": labels
-                                }, f)
+                        optimizer.zero_grad()
+                        optimizerc.zero_grad()
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.step(optimizerc)
+                        scaler.update()
 
-                            # save the pretrained model:
+                    if epoch == total_wamup_epochs:
+                        print("Warmup Ends...Start training...")
+                        model = update_pi_from_z(model)
 
-                            torch.save(model.state_dict(), '{}/checkpoints/model_pretrain{}.pt'.format(dir_name, epoch))
-                            # I need to freeze the feature extraction layers
+                    if epoch <= total_wamup_epochs:
+                        progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss_tcr.item()), ae_loss ="{:5.4f}".format(loss_ae.item()) )
+                    else:
+                        progress_bar.set_postfix(
+                            tcr_loss="{:5.4f}".format(loss_tcr.item()),
+                            exp_loss="{:5.4f}".format(loss_exp.item()),
+                            block_loss="{:5.4f}".format(loss_bl.item()),
+                            ae_loss="{:5.4f}".format(loss_ae.item())
+                        )
+                    warmup_step += 1
+                progress_bar.update(1)
+
+                for k in loss_dict.keys():
+                    if len(loss_dict[k]) != 0:
+                        writer.add_scalar(k, np.mean(loss_dict[k]), global_step=epoch)
+                    else:
+                        writer.add_scalar(k, 0, global_step=epoch)
+
+                if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
+                    torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
+
+                ### evaluate on test set
+                if epoch > total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
+                    print('EVAL on VALIDATE DATASETS')
+                    model.eval()
+                    with torch.no_grad():
+                        logits_list = []
+                        y_list = []
+
+                        for step, (x, y) in enumerate(test_loader):
+                            x, y = x.float().to(device), y.to(device)
+                            y_list.append(y.detach().cpu().numpy())
+                            _, logits,_ = model(x)
+                            logits_list.append(logits)
+
+                        logits = torch.cat(logits_list, dim=0)
+
+                        self_coeff = (logits @ logits.T).abs()
+
+                        y_np = np.concatenate(y_list, axis=0)
+                        acc_lst, nmi_lst, pred_lst = spectral_clustering_metrics(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np)
+                        writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+                        with open('{}/acc.txt'.format(dir_name), 'a') as f:
+                            f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
+                                                                                                np.mean(nmi_lst), np.max(nmi_lst),epoch))
+                        print('Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {} epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
+                                                                                                np.mean(nmi_lst), np.max(nmi_lst),epoch))
+                        if previous_nmi is None:
+                            previous_nmi = np.mean(nmi_lst)
+                            torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+
+                            result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                                [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'acc': np.mean(acc_lst),
+                                  'nmi': np.mean(nmi_lst),
+                                  }])])
+
+                            if not os.path.exists(args.out_dir):
+                                os.makedirs(args.out_dir)
+                            result_df.to_csv(
+                                '{}/{}_{}.csv'.format(
+                                    args.out_dir, args.data.lower(), args.experiment_name), index=False)
+
+                        elif np.mean(nmi_lst) > previous_nmi:
+                            previous_nmi = np.mean(nmi_lst)
+
+                            torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+
+                            result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                                [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'acc': np.mean(acc_lst),
+                                  'nmi': np.mean(nmi_lst),
+                                  }])])
+
+                            result_df.to_csv(
+                                '{}/{}_{}.csv'.format(
+                                    args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
 
-                        # collect the z values and save to a file
-                        loss_tcr = warmup_criterion(z) # logdet() loss
-                        loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
-                        loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-                        loss_ae = F.mse_loss(x_recon, x, reduction='mean')
-
-                        loss_dict['loss_TCR'].append(loss_tcr.item())
-                        loss_dict['loss_Exp'].append(loss_exp.item())
-                        loss_dict['loss_Block'].append(loss_bl.item())
-                        loss_dict['loss_ae'].append(loss_ae.item())
-
-                if epoch <= total_wamup_epochs:
-                    optimizer.zero_grad()
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                elif epoch == total_wamup_epochs+1:
-                    # freeze the autoencoder weights:
-                    for p in model.ae.parameters():
-                        p.requires_grad = False
-                    # and then perform backprop:
-                    optimizer.zero_grad()
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                else:
-                    optimizer.zero_grad()
-                    optimizerc.zero_grad()
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.step(optimizerc)
-                    scaler.update()
-
-                if epoch == total_wamup_epochs:
-                    print("Warmup Ends...Start training...")
-                    model = update_pi_from_z(model)
-
-                if epoch <= total_wamup_epochs:
-                    progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss_tcr.item()), ae_loss ="{:5.4f}".format(loss_ae.item()) )
-                else:
-                    progress_bar.set_postfix(
-                        tcr_loss="{:5.4f}".format(loss_tcr.item()),
-                        exp_loss="{:5.4f}".format(loss_exp.item()),
-                        block_loss="{:5.4f}".format(loss_bl.item()),
-                        ae_loss="{:5.4f}".format(loss_ae.item())
-                    )
-                warmup_step += 1
-            progress_bar.update(1)
-
-            for k in loss_dict.keys():
-                if len(loss_dict[k]) != 0:
-                    writer.add_scalar(k, np.mean(loss_dict[k]), global_step=epoch)
-                else:
-                    writer.add_scalar(k, 0, global_step=epoch)
-
-            if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
-                torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
-
-            ### evaluate on test set
-            if epoch > total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
-                print('EVAL on VALIDATE DATASETS')
-                model.eval()
-                with torch.no_grad():
-                    logits_list = []
-                    y_list = []
-
-                    for step, (x, y) in enumerate(test_loader):
-                        x, y = x.float().to(device), y.to(device)
-                        y_list.append(y.detach().cpu().numpy())
-                        _, logits,_ = model(x)
-                        logits_list.append(logits)
-
-                    logits = torch.cat(logits_list, dim=0)
-
-                    self_coeff = (logits @ logits.T).abs()
-
-                    y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst = spectral_clustering_metrics(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np)
-                    writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
-                    with open('{}/acc.txt'.format(dir_name), 'a') as f:
-                        f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                                                            np.mean(nmi_lst), np.max(nmi_lst),epoch))
-                    print('Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {} epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                                                            np.mean(nmi_lst), np.max(nmi_lst),epoch))
-                    if previous_nmi is None:
-                        previous_nmi = np.mean(nmi_lst)
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    elif np.mean(nmi_lst) > previous_nmi:
-                        previous_nmi = np.mean(nmi_lst)
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-
-                    # serialize this into a pandas dataframe:

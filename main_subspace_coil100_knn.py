@@ -112,7 +112,7 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 #         for key, value in yaml_data.items():
 #             setattr(args, key, value)
 # else:
-with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+with open(os.path.join('configs','{}_subspace_knn.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
         setattr(args, key, value)
@@ -252,6 +252,7 @@ previous_nmi = None
 
 result_df = pd.DataFrame()
 gamma_estimated_list = []
+gamma = None
 for seed in args.seeds:
     same_seeds(seed)
 
@@ -388,7 +389,7 @@ for seed in args.seeds:
                     torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
                 ### evaluate on test set
-                if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+                if epoch >= total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
                     print('EVAL on VALIDATE DATASETS')
                     model.eval()
                     with torch.no_grad():
@@ -429,7 +430,10 @@ for seed in args.seeds:
                             torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
                             result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                                [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'acc': np.mean(acc_lst),
+                                [{'seq_name': args.data.lower(), 'seed': seed, 'gamma_pre': gamma / 3,
+                                  'gamma_default': args.gamma,
+                                  'gamma': gamma,
+                                  'epoch': epoch, 'acc': np.mean(acc_lst),
                                   'nmi': np.mean(nmi_lst),
                                   }])])
 

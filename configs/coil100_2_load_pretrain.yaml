@@ -9,7 +9,8 @@ lr: 1.e-4
 eps: 0.05
 data_dir: ./data/datasets/coil100.mat
 warmup: 0
-save_every: 5000
+save_every: 100
 channels: [1, 50]
 kernels: [5]
 output_file: ./data/datasets/coil100_dsc_pretrain_loaded.pkl
+experiment_name: coil100_subspace_pretrain_features

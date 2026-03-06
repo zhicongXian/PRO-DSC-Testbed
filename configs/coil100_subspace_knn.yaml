@@ -12,5 +12,6 @@ warmup: 0
 save_every: 100
 channels: [1, 50]
 kernels: [5]
+seeds: [1,2,3,4,5,6,7]
 output_file: ./data/datasets/coil100_dsc_pretrain_loaded.pkl
-experiment_name: coil100_subspace_pretrain_features
+experiment_name: coil100_subspace_pretrain_features_knn
