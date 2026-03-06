@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_knn_enhanced_cont.py --data=coil100 --bs=120 --load_pretrain  >> coil100_pretrain_knn_out.txt
+python3 ./main_subspace_coil100_knn.py --data=coil100 --bs=120 --load_pretrain  >> coil100_pretrain_knn_out.txt
 
