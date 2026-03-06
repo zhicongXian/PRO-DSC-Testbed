@@ -12,3 +12,5 @@ subspace_coil.txt
 subspace_coil_out.txt
 cifa10_out.txt
 cifa10.txt
+coil100_pretrain_knn.txt
+coil100_pretrain_knn_out.txt
