@@ -103,7 +103,7 @@ parser.add_argument('--seeds', type=int, default=[1,2],
 
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-
+parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
