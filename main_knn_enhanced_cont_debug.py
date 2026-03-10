@@ -104,6 +104,9 @@ parser.add_argument('--seeds', type=int, default=[1,2],
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
+parser.add_argument('--evaluate_every', type=int, default=5,
+                    help='model save every')
+
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
@@ -231,12 +234,18 @@ candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(dev
 nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
+debug_df = pd.DataFrame()
+col_names = ['batch_id_' + str(i) for i in range(args.bs)]
 constant_factor = 6
+debug_pseudo_inverse_df = pd.DataFrame()
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
+            if epoch % args.evaluate_every == 0:
+                debug_df = pd.DataFrame()
+                debug_pseudo_inverse_df=pd.DataFrame()
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
@@ -348,6 +357,28 @@ for seed in args.seeds:
                             c_matrix = np.dot(block.detach().cpu().numpy(),
                                                     approx_pseudo)
 
+                            # start debugging:
+                            # calculate the pairwise similarity:
+                            if epoch % args.evaluate_every == 0:
+                                pairwise_dist_latent_embedding = torch.mm(z / torch.linalg.norm(z, axis=1, keepdims=True),
+                                             (z / torch.linalg.norm(
+                                                 z, axis=1, keepdims=True)).T)
+                                data_to_serialize = pairwise_dist_latent_embedding.detach().cpu().numpy() #  this is a row vector
+                                df_val = np.concatenate([data_to_serialize, id_num.detach().cpu().numpy()[:,None]], axis = 1)
+                                df = pd.DataFrame(df_val,
+                                                  columns=col_names + ['id_num'])
+
+                                debug_df = pd.concat([debug_df, df], axis=0)
+                                print("shape of pseudo inverse: ", c_matrix.shape)
+                                data_to_serialize = np.asarray(c_matrix) #  this is a row vector
+                                df_val = np.concatenate([data_to_serialize, id_num.detach().cpu().numpy()[:,None]], axis = 1)
+                                df = pd.DataFrame(df_val,
+                                                  columns=col_names + ['id_num'])
+
+                                debug_pseudo_inverse_df = pd.concat([debug_pseudo_inverse_df, df], axis=0)
+
+
+
                             # G = block @ block.T
                             # diagIndices = np.diag_indices(G.shape[0])
                             #
@@ -438,6 +469,11 @@ for seed in args.seeds:
                     )
                 warmup_step += 1
             progress_bar.update(1)
+            if epoch> total_wamup_steps and  epoch % args.evaluate_every==0 :
+                debug_df.to_csv(
+                    './debug/latent_emb_similarity_seed_{0}_epoch_{1}'.format(seed, epoch, args.experiment_name))
+                debug_pseudo_inverse_df.to_csv(
+                    './debug/pseudo_inv_similarity_seed_{0}_epoch_{1}'.format(seed, epoch, args.experiment_name))
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -491,7 +527,7 @@ for seed in args.seeds:
                             os.makedirs(args.out_dir)
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), mode = 'a', index=False)
 
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
@@ -507,6 +543,6 @@ for seed in args.seeds:
 
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), mode = 'a',index=False)
 
 

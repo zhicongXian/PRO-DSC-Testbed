@@ -14,7 +14,10 @@ cifa10_out.txt
 cifa10.txt
 coil100_pretrain_knn.txt
 coil100_pretrain_knn_out.txt
+<<<<<<< HEAD
 .cifa10.txt.swp
+=======
 debug
 wandb
 figs
+>>>>>>> af0edec0810aef0d1917e13ffa0a4b495b597528

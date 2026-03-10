@@ -231,7 +231,7 @@ candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(dev
 nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
-constant_factor = 6
+constant_factor = 600*500
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
@@ -344,22 +344,20 @@ for seed in args.seeds:
 
                             block = z.detach().clone().double()
 
-                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                    approx_pseudo)
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
 
-                            # G = block @ block.T
-                            # diagIndices = np.diag_indices(G.shape[0])
-                            #
-                            # P = imqrginv_fixed(G.detach().cpu().numpy())
-                            # P = np.array(P)
-                            # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
-                            # B[diagIndices] = 0
-                            # c_matrix = B
+                            G =  block @ block.T
+                            diagIndices = np.diag_indices(G.shape[0])
 
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())# imqrginv_fixed(G.detach().cpu().numpy())
+                            # print("shape of P is ", P.shape)
+
+                            P = np.array(P)
+                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
+                            B[diagIndices] = 0
                             # c_matrix = np.dot(block.detach().cpu().numpy(),
                             #                         B)
-
+                            c_matrix = B
                             # print("size of the array c_matrix: ", c_matrix.shape )
                             # print("size of the array block: ", block.shape)
                             # print("size of the array B: ", B.shape)
@@ -380,7 +378,7 @@ for seed in args.seeds:
                             #######################################
 
                             # conver to laplacian matrix:
-                            A = c_matrix #0.5 * (c_matrix.abs() + c_matrix.abs().T)
+                            A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
                             L_c = torch.diag(A.sum(1)) - A
                             _, c_u = torch.linalg.eigh(
                                 c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
