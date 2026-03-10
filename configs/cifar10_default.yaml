@@ -11,6 +11,6 @@ lr_c: 1.e-4
 eps: 0.1
 data_dir: ./data/datasets/cifar10_clip_60000.pt
 data_dir_val: ./data/datasets/cifar10_clip_60000.pt
-warmup: 2
+warmup: 200
 save_every: 10
-experiment_name: cifar10_knn_cnt_test
+experiment_name: cifar10_knn_cnt
