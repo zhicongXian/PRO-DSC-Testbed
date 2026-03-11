@@ -404,7 +404,7 @@ def interface_to_train():
 if __name__ == '__main__':
     sweep_config = load_sweep_config()
     sweep_id = ""
-    count = 2
+    count = 200
 
     if sweep_id == "":
         sweep_id = wandb.sweep(sweep_config, project="pro_dsc_cifar")
