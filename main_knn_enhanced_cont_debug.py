@@ -516,7 +516,10 @@ for seed in args.seeds:
                     if previous_nmi is None:
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+                        if epoch <= total_wamup_steps+2:
+                            gamma_before = None
+                        else:
+                            gamma_before = gamma / constant_factor
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
                               'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
@@ -534,7 +537,10 @@ for seed in args.seeds:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+                        if epoch <= total_wamup_steps + 2:
+                            gamma_before = None
+                        else:
+                            gamma_before = gamma / constant_factor
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
                               'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
