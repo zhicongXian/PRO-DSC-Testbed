@@ -238,6 +238,7 @@ debug_df = pd.DataFrame()
 col_names = ['batch_id_' + str(i) for i in range(args.bs)]
 constant_factor = 6
 debug_pseudo_inverse_df = pd.DataFrame()
+gamma = None
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
