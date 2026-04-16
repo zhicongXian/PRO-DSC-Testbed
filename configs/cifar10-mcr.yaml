@@ -1,14 +1,14 @@
-gamma: 200
+gamma: 270
 beta: 100
 pieta: 0.02
 hidden_dim: 1024
 z_dim: 128
 n_clusters: 10
-epo: 2000
+epo: 10
 lr: 1.e-4
 lr_c: 1.e-4
 eps: 0.05
-warmup: 1000
+warmup: 2
 save_every: 50
 channels: [1, 50]
 kernels: [5]
