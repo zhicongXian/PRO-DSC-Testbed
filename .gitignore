@@ -18,3 +18,5 @@ coil100_pretrain_knn_out.txt
 debug
 wandb
 figs
+cifa10_mcr_data_dependent_regularization.txt
+cifa10_mcr_data_dependent_regularization_out.txt
