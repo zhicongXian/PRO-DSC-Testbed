@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_knn_enhanced_cont_exclude_identity_better_rank_estimation.py --data=cifar10-mcr --experiment_name=cifa10_mcr_data_dependent_regularization --epo=5000 >> cifa10_mcr_data_dependent_regularization_out.txt
+python3 ./main_knn_enhanced_cont_exclude_identity_better_rank_estimation.py --data=cifar10-mcr --experiment_name=cifa10_mcr_data_dependent_rank_estimate --epo=5000 >> cifa10_mcr_data_dependent_regularization_out.txt
 
