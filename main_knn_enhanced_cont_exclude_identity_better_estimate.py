@@ -156,6 +156,8 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
+        if hasattr(args, key):
+            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
@@ -237,6 +239,7 @@ nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
 constant_factor = 600*500
+gamma_previous = None
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
@@ -247,7 +250,13 @@ for seed in args.seeds:
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
-                gamma = np.nanmean(np.array(gamma_estimated_list))
+                gamma = np.nanmedian(np.array(gamma_estimated_list))
+                if gamma_previous is None:
+                    gamma_previous = gamma
+                elif gamma_previous < gamma:
+                    gamma = gamma_previous
+                else:
+                    gamma_previous = gamma
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
@@ -349,7 +358,7 @@ for seed in args.seeds:
 
                             block = z.detach().clone().double()
 
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+
 
                             G =  block @ block.T
                             diagIndices = np.diag_indices(G.shape[0])
@@ -383,8 +392,12 @@ for seed in args.seeds:
                             #######################################
 
                             # estimate \lambda:
-                            lambda_hat = estimate_lambda_local(block.T.cpu().numpy(), B, args.n_clusters, eta = 10 )
-                            gamma_estimated = 1 / lambda_hat
+                            # lambda_hat = estimate_lambda_local(block.T.cpu().numpy(), B, args.n_clusters, eta = 10 )
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                            #                         approx_pseudo)
+                            # 8 for cifar10
+                            gamma_estimated = np.linalg.norm(B, 1)/len(B)/8 # 1 / lambda_hat
                             gamma_estimated_list.append(gamma_estimated)
                             print("estimated gamma: ",gamma_estimated)
 

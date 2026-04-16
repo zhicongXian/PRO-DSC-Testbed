@@ -154,8 +154,6 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, key):
-            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
@@ -238,7 +236,7 @@ nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 result_df = pd.DataFrame()
 debug_df = pd.DataFrame()
 col_names = ['batch_id_' + str(i) for i in range(args.bs)]
-constant_factor = 6
+constant_factor = 1/8
 debug_pseudo_inverse_df = pd.DataFrame()
 gamma = None
 for seed in args.seeds:
@@ -421,8 +419,8 @@ for seed in args.seeds:
                             c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
                             c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            # print("current estimated gamma: ", gamma_estimated.item())
+                            gamma_estimated = constant_factor*(torch.trace(z.matmul(z.T)))#constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("current estimated gamma: ", gamma_estimated.item())
                             gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
 
                         # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:

@@ -6,6 +6,10 @@ from distributed.utils_test import double
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import numpy as np
+
+from lambda_utils.lambda_estimate_utils import estimate_lambda_local
+
+
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
     q, r = jnp.linalg.qr(a, mode="reduced")
@@ -46,6 +50,7 @@ from model.model import PRO_DSC
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDatasetWithIDs, FeatureDataset
 from loss.loss_fn import TotalCodingRate
+from lambda_utils import *
 from utils import *
 from metrics.clustering import spectral_clustering_metrics
 import pandas as pd
@@ -104,9 +109,6 @@ parser.add_argument('--seeds', type=int, default=[1,2],
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
-parser.add_argument('--evaluate_every', type=int, default=5,
-                    help='model save every')
-
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
@@ -154,8 +156,6 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, key):
-            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
@@ -236,19 +236,12 @@ candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(dev
 nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
-debug_df = pd.DataFrame()
-col_names = ['batch_id_' + str(i) for i in range(args.bs)]
-constant_factor = 6
-debug_pseudo_inverse_df = pd.DataFrame()
-gamma = None
+constant_factor = 600*500
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
-            if epoch % args.evaluate_every == 0:
-                debug_df = pd.DataFrame()
-                debug_pseudo_inverse_df=pd.DataFrame()
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
@@ -350,50 +343,26 @@ for seed in args.seeds:
                     else:
                         loss_tcr = warmup_criterion(z) # logdet() loss
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
+                        loss_bl = torch.norm(self_coeff, p = 1)/len(z)#torch.trace(L.T @ W) / args.bs # r() loss
                         # # here you can add your initial estimates for Z and for C. and subsequently update!
                         if epoch> total_wamup_steps: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
 
                             block = z.detach().clone().double()
 
                             approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                    approx_pseudo)
 
-                            # start debugging:
-                            # calculate the pairwise similarity:
-                            if epoch % args.evaluate_every == 0:
-                                pairwise_dist_latent_embedding = torch.mm(z / torch.linalg.norm(z, axis=1, keepdims=True),
-                                             (z / torch.linalg.norm(
-                                                 z, axis=1, keepdims=True)).T)
-                                data_to_serialize = pairwise_dist_latent_embedding.detach().cpu().numpy() #  this is a row vector
-                                df_val = np.concatenate([data_to_serialize, id_num.detach().cpu().numpy()[:,None]], axis = 1)
-                                df = pd.DataFrame(df_val,
-                                                  columns=col_names + ['id_num'])
+                            G =  block @ block.T
+                            diagIndices = np.diag_indices(G.shape[0])
 
-                                debug_df = pd.concat([debug_df, df], axis=0)
-                                print("shape of pseudo inverse: ", c_matrix.shape)
-                                data_to_serialize = np.asarray(c_matrix) #  this is a row vector
-                                df_val = np.concatenate([data_to_serialize, id_num.detach().cpu().numpy()[:,None]], axis = 1)
-                                df = pd.DataFrame(df_val,
-                                                  columns=col_names + ['id_num'])
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())# imqrginv_fixed(G.detach().cpu().numpy())
+                            # print("shape of P is ", P.shape)
 
-                                debug_pseudo_inverse_df = pd.concat([debug_pseudo_inverse_df, df], axis=0)
-
-
-
-                            # G = block @ block.T
-                            # diagIndices = np.diag_indices(G.shape[0])
-                            #
-                            # P = imqrginv_fixed(G.detach().cpu().numpy())
-                            # P = np.array(P)
-                            # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
-                            # B[diagIndices] = 0
-                            # c_matrix = B
-
+                            P = np.array(P)
+                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
+                            B[diagIndices] = 0
                             # c_matrix = np.dot(block.detach().cpu().numpy(),
                             #                         B)
-
+                            c_matrix = B
                             # print("size of the array c_matrix: ", c_matrix.shape )
                             # print("size of the array block: ", block.shape)
                             # print("size of the array B: ", B.shape)
@@ -404,8 +373,8 @@ for seed in args.seeds:
                             c_matrix = torch.from_numpy(c_matrix)
 
                             ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                         approx_pseudo)
+                            c_matrix = np.dot(block.detach().cpu().numpy(),
+                                                    approx_pseudo)
                             # even older, no fast implementation
                             # c_matrix = self_representation_ls(block.T)
                             # c_matrix = block @ (
@@ -413,17 +382,25 @@ for seed in args.seeds:
                             #
                             #######################################
 
-                            # conver to laplacian matrix:
-                            A = c_matrix #0.5 * (c_matrix.abs() + c_matrix.abs().T)
-                            L_c = torch.diag(A.sum(1)) - A
-                            _, c_u = torch.linalg.eigh(
-                                c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            # estimate \lambda:
 
-                            gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            # print("current estimated gamma: ", gamma_estimated.item())
-                            gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
+
+                            # lambda_hat = estimate_lambda_local(block.T.cpu().numpy(), B, args.n_clusters, eta = 10 )
+                            gamma_estimated = np.linalg.norm(c_matrix, 1)*args.beta/4
+                            gamma_estimated_list.append(gamma_estimated)
+                            print("estimated gamma: ",gamma_estimated)
+
+                            # conver to laplacian matrix:
+                            # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
+                            # L_c = torch.diag(A.sum(1)) - A
+                            # _, c_u = torch.linalg.eigh(
+                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+
+                            # gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            # # print("current estimated gamma: ", gamma_estimated.item())
+                            # gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
 
                         # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:
                         #     gamma = np.mean(np.array(gamma_estimated_list))
@@ -472,11 +449,6 @@ for seed in args.seeds:
                     )
                 warmup_step += 1
             progress_bar.update(1)
-            if epoch> total_wamup_steps and  epoch % args.evaluate_every==0 :
-                debug_df.to_csv(
-                    './debug/latent_emb_similarity_seed_{0}_epoch_{1}'.format(seed, epoch, args.experiment_name))
-                debug_pseudo_inverse_df.to_csv(
-                    './debug/pseudo_inv_similarity_seed_{0}_epoch_{1}'.format(seed, epoch, args.experiment_name))
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -518,10 +490,7 @@ for seed in args.seeds:
                     if previous_nmi is None:
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        if epoch <= total_wamup_steps+2:
-                            gamma_before = None
-                        else:
-                            gamma_before = gamma / constant_factor
+                        gamma_before = gamma / constant_factor
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
                               'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
@@ -533,16 +502,13 @@ for seed in args.seeds:
                             os.makedirs(args.out_dir)
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), mode = 'a', index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        if epoch <= total_wamup_steps + 2:
-                            gamma_before = None
-                        else:
-                            gamma_before = gamma / constant_factor
+                        gamma_before = gamma / constant_factor
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
                               'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
@@ -552,6 +518,6 @@ for seed in args.seeds:
 
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), mode = 'a',index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
 
