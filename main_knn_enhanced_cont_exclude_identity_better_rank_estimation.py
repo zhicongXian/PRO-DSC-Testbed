@@ -239,6 +239,7 @@ nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
 constant_factor = 600*500
+gamma = None
 gamma_previous = None
 for seed in args.seeds:
     same_seeds(seed)
@@ -505,10 +506,10 @@ for seed in args.seeds:
                     if previous_nmi is None:
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                              'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
+                             'gamma_estimated': gamma,
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               }])])
@@ -523,10 +524,10 @@ for seed in args.seeds:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                              'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
+                               'gamma_estimated': gamma,
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               }])])
