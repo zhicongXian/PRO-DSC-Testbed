@@ -400,9 +400,17 @@ for seed in args.seeds:
                             # 8 for cifar10
                             frobi= np.linalg.norm(B, "fro")
                             l2_norm_b = np.linalg.norm(B, 2)
-                            soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                            print("soft_rank_global", soft_rank_global)
-                            gamma_estimated = args.beta*math.sqrt(soft_rank_global)/4 # 1 / lambda_hat
+                            try:
+                                soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                                print("soft_rank_global", soft_rank_global)
+                                gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 4  # 1 / lambda_hat
+                            except Exception as e:
+                                print(e)
+                                gamma_estimated = gamma_previous
+
+
+
+
                             gamma_estimated_list.append(gamma_estimated)
                             print("estimated gamma: ",gamma_estimated)
 
@@ -425,7 +433,11 @@ for seed in args.seeds:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
                             loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
-                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
+                            if gamma is None:
+                                loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                            else:
+
+                                loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
                             print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
                             # else:
                             #     loss = loss_tcr + gamma * loss_exp + args.beta  * loss_bl
