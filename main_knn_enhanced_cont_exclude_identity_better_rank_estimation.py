@@ -399,8 +399,9 @@ for seed in args.seeds:
                             #                         approx_pseudo)
                             # 8 for cifar10
                             frobi= np.linalg.norm(B, "fro")
-                            l2_norm_b = np.linalg.norm(B, 2)
+
                             try:
+                                l2_norm_b = np.linalg.norm(B, 2)
                                 soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
                                 print("soft_rank_global", soft_rank_global)
                                 gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 4  # 1 / lambda_hat
