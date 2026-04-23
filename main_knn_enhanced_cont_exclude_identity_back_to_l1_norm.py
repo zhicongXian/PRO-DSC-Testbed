@@ -251,16 +251,16 @@ for seed in args.seeds:
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
-                gamma = np.nanmean(np.array(gamma_estimated_list))
+                gamma = np.nanmedian(np.array(gamma_estimated_list))
                 gamma_previous = gamma
 
-                # remove the scheduling
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                elif gamma_previous > gamma:
-                    gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
+                # # remove the scheduling
+                # if gamma_previous is None:
+                #     gamma_previous = gamma
+                # elif gamma_previous > gamma:
+                #     gamma = gamma_previous
+                # else:
+                #     gamma_previous = gamma
 
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
@@ -402,42 +402,40 @@ for seed in args.seeds:
                             # c_matrix_np = np.dot(block.detach().cpu().numpy(),
                             #                         approx_pseudo)
                             # 8 for cifar10
-                            frobi= np.linalg.norm(B, "fro")
-
-                            try:
-                                l2_norm_b = np.linalg.norm(B, 2)
-                                soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                                print("soft_rank_global", soft_rank_global)
-                                gamma_estimated = args.beta * soft_rank_global/4   # 1 / lambda_hat
-                            except Exception as e:
-                                print(e)
-                                try:
-                                    print("add to check numerical instability")
-                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    print("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = args.beta * soft_rank_global/4
-                                except Exception as e:
-                                    print(e)
-                                gamma_estimated = gamma_previous
-
-
-
-
-                            gamma_estimated_list.append(gamma_estimated)
-                            print("estimated gamma: ",gamma_estimated)
+                            # frobi= np.linalg.norm(B, "fro")
+                            #
+                            # try:
+                            #     l2_norm_b = np.linalg.norm(B, 2)
+                            #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                            #     print("soft_rank_global", soft_rank_global)
+                            #     gamma_estimated = args.beta * math.sqrt(soft_rank_global)/2   # 1 / lambda_hat
+                            # except Exception as e:
+                            #     print(e)
+                            #     try:
+                            #         print("add to check numerical instability")
+                            #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                            #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                            #         print("soft_rank_global", soft_rank_global)
+                            #         gamma_estimated = args.beta * math.sqrt(soft_rank_global)/2
+                            #     except Exception as e:
+                            #         print(e)
+                            #     gamma_estimated = gamma_previous
+                            #
+                            #
+                            # gamma_estimated_list.append(gamma_estimated)
+                            # print("estimated gamma: ",gamma_estimated)
 
                             # conver to laplacian matrix:
-                            # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
-                            # L_c = torch.diag(A.sum(1)) - A
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
+                            L_c = torch.diag(A.sum(1)) - A
+                            _, c_u = torch.linalg.eigh(
+                                c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            # gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            # # print("current estimated gamma: ", gamma_estimated.item())
-                            # gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
+                            gamma_estimated =torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("current estimated gamma: ", gamma_estimated.item())
+                            gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
 
                         # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:
                         #     gamma = np.mean(np.array(gamma_estimated_list))
