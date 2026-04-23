@@ -252,12 +252,16 @@ for seed in args.seeds:
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
                 gamma = np.nanmean(np.array(gamma_estimated_list))
+                gamma_previous = gamma
+
+                # remove the scheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
                 elif gamma_previous > gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
+
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
@@ -412,7 +416,7 @@ for seed in args.seeds:
                                     l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
                                     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                     print("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 4
+                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 2
                                 except Exception as e:
                                     print(e)
                                 gamma_estimated = gamma_previous

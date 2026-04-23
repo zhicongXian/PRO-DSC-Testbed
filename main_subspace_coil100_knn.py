@@ -27,6 +27,7 @@ import scipy.io as sio
 from model.DSCNet import PRO_DSC
 import  jax.scipy as jsc
 import  jax.numpy as jnp
+import math as math
 
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -254,6 +255,7 @@ previous_nmi = None
 result_df = pd.DataFrame()
 gamma_estimated_list = []
 gamma = None
+gamma_previous = None
 for seed in args.seeds:
     same_seeds(seed)
 
@@ -281,6 +283,16 @@ for seed in args.seeds:
                 if len(gamma_estimated_list) >0:
                     gamma = np.mean(np.array(gamma_estimated_list))
                     gamma_estimated_list = []
+                    gamma_previous = gamma
+                    if gamma_previous is None:
+                        gamma_previous = gamma
+                    elif gamma_previous > gamma:
+                        gamma = gamma_previous
+                    else:
+                        gamma_previous = gamma
+
+                    gamma_estimated_list = []
+
                     print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
                 for step, (x, y) in enumerate(train_loader):
                     x, y = x.float().to(device), y.to(device)
@@ -292,26 +304,59 @@ for seed in args.seeds:
                         if epoch > total_wamup_epochs:
                             block = z.detach().clone().double()
 
-                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            c_matrix = np.dot(block.detach().cpu().numpy(),
-                                              approx_pseudo)
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix = np.dot(block.detach().cpu().numpy(),
+                            #                   approx_pseudo)
                             # this does not get from raw features, why the pseudo inverse not identity matrices?
                             # plot the distance measurement
 
-                            c_matrix = torch.from_numpy(c_matrix)
+                            # c_matrix = torch.from_numpy(c_matrix)
+                            #
+                            # # c_matrix = self_representation_ls(block.T)
+                            # # c_matrix = block @ (
+                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
+                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
+                            # _, c_u = torch.linalg.eigh(
+                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            # --TODO here:
+                            G = block @ block.T
+                            diagIndices = np.diag_indices(G.shape[0])
 
-                            # c_matrix = self_representation_ls(block.T)
-                            # c_matrix = block @ (
-                            #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                            _, c_u = torch.linalg.eigh(
-                                c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
+                            # print("shape of P is ", P.shape)
 
-                            gamma_estimated = 3 * 1 / (torch.trace(
-                                L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
+                            P = np.array(P)
+                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+                            B[diagIndices] = 0
+                            # c_matrix = np.dot(block.detach().cpu().numpy(),
+                            #                         B)
+                            c_matrix = B
+
+                            frobi= np.linalg.norm(B, "fro")
+
+                            try:
+                                l2_norm_b = np.linalg.norm(B, 2)
+                                soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                                print("soft_rank_global", soft_rank_global)
+                                gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 4  # 1 / lambda_hat
+                            except Exception as e:
+                                print(e)
+                                try:
+                                    print("add to check numerical instability")
+                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    print("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global) / 4
+                                except Exception as e:
+                                    print(e)
+                                gamma_estimated = gamma_previous
+
+
+                            # gamma_estimated = 3 * 1 / (torch.trace(
+                            #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            gamma_estimated_list.append(gamma_estimated)
 
 
                         self_coeff = (logits @ logits.T)
