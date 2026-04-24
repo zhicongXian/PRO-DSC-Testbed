@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=L1DataDe
+#SBATCH --job-name=2DataDe
 #SBATCH --output=l1cifa10_mcr_data_dependent_regularization.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_knn_enhanced_cont_exclude_identity_back_to_l1_norm.py --data=cifar10-mcr --experiment_name=cifa10_mcr_l1_norm_data_de --epo=5000 >> l1cifa10_mcr_data_dependent_regularization_out.txt
+python3 ./main_knn_enhanced_cont_exclude_identity_better_rank_estimation.py --data=cifar10-mcr --experiment_name=cifa10_mcr_data_dependent_rank_estimate_rerun2 --epo=5000 >> l1cifa10_mcr_data_dependent_regularization_out.txt
 

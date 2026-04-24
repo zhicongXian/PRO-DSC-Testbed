@@ -156,7 +156,7 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, "experiment_name"):
+        if hasattr(args, "experiment_name")  and key== "experiment_name":
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
