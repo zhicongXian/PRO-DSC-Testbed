@@ -20,3 +20,5 @@ wandb
 figs
 cifa10_mcr_data_dependent_regularization.txt
 cifa10_mcr_data_dependent_regularization_out.txt
+l1cifa10_mcr_data_dependent_regularization.txt
+l1cifa10_mcr_data_dependent_regularization_out.txt

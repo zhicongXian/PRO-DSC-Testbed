@@ -156,7 +156,7 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, "experimen_name"):
+        if hasattr(args, "experiment_name"):
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
@@ -252,7 +252,7 @@ for seed in args.seeds:
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
                 gamma = np.nanmean(np.array(gamma_estimated_list))
-                gamma_previous = gamma
+
 
                 # remove the scheduling
                 if gamma_previous is None:

@@ -156,7 +156,7 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, "experimen_name"):
+        if hasattr(args, "experiment_name"):
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
@@ -252,15 +252,15 @@ for seed in args.seeds:
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
                 gamma = np.nanmedian(np.array(gamma_estimated_list))
-                gamma_previous = gamma
 
-                # # remove the scheduling
-                # if gamma_previous is None:
-                #     gamma_previous = gamma
-                # elif gamma_previous > gamma:
-                #     gamma = gamma_previous
-                # else:
-                #     gamma_previous = gamma
+
+                # remove the scheduling
+                if gamma_previous is None:
+                    gamma_previous = gamma
+                elif gamma_previous > gamma:
+                    gamma = gamma_previous
+                else:
+                    gamma_previous = gamma
 
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
@@ -433,9 +433,9 @@ for seed in args.seeds:
                             c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
                             c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            gamma_estimated =torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            gamma_estimated =np.linalg.norm(B, 1)/args.bs/args.bs/4*args.beta#torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("current estimated gamma: ", gamma_estimated.item())
-                            gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
+                            gamma_estimated_list.append(gamma_estimated)
 
                         # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:
                         #     gamma = np.mean(np.array(gamma_estimated_list))
