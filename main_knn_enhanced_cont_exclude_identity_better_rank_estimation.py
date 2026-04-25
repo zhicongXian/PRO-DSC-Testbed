@@ -377,6 +377,8 @@ for seed in args.seeds:
                             # c_matrix = np.dot(block.detach().cpu().numpy(),
                             #                         B)
                             c_matrix = B
+                            B = B.T @ W.detach().cpu().numpy()
+                            # print("B shape", B.shape)
                             # print("size of the array c_matrix: ", c_matrix.shape )
                             # print("size of the array block: ", block.shape)
                             # print("size of the array B: ", B.shape)
