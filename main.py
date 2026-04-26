@@ -69,7 +69,7 @@ parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml

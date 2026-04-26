@@ -111,7 +111,7 @@ parser.add_argument('--out_dir', type=str, default="results")
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar10-mcr','imagenet']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 import torch
@@ -156,7 +156,7 @@ def self_representation_ls(X: torch.Tensor) -> torch.Tensor:
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if hasattr(args, key):
+        if hasattr(args, "experiment_name")  and key== "experiment_name":
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
@@ -206,7 +206,7 @@ else:
     clip_features_test = feature_dict['features']
     clip_labels_test = feature_dict['ys']
 
-#### construct dataloader for batch training  
+#### construct dataloader for batch training
 clip_feature_set = FeatureDatasetWithIDs(clip_features, clip_labels, train_ids)
 train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
@@ -229,7 +229,7 @@ optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=a
 optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
 scaler = GradScaler()
 
-### warmup iteration setting 
+### warmup iteration setting
 total_wamup_steps = args.warmup
 warmup_step = 0
 gamma_estimated_list = []
@@ -239,6 +239,7 @@ nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 
 result_df = pd.DataFrame()
 constant_factor = 600*500
+gamma = None
 gamma_previous = None
 for seed in args.seeds:
     same_seeds(seed)
@@ -250,13 +251,17 @@ for seed in args.seeds:
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(gamma_estimated_list) > 0:
-                gamma = np.nanmedian(np.array(gamma_estimated_list))
+                gamma = np.nanmean(np.array(gamma_estimated_list))
+
+
+                # remove the scheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
-                elif gamma_previous < gamma:
+                elif gamma_previous > gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
+
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
@@ -358,6 +363,8 @@ for seed in args.seeds:
 
                             block = z.detach().clone().double()
 
+
+
                             G =  block @ block.T
                             diagIndices = np.diag_indices(G.shape[0])
 
@@ -370,6 +377,13 @@ for seed in args.seeds:
                             # c_matrix = np.dot(block.detach().cpu().numpy(),
                             #                         B)
                             c_matrix = B
+                            L_b = np.diag(B.sum(1)) - B
+                            _, U_b = np.linalg.eigh(
+                                L_b)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            Ub_hat = U_b[:, :args.n_clusters]  # U is the eigenvectors
+                            Wb = Ub_hat @ Ub_hat.T
+                            B = B.T @ Wb#.detach().cpu().numpy()
+                            # print("B shape", B.shape)
                             # print("size of the array c_matrix: ", c_matrix.shape )
                             # print("size of the array block: ", block.shape)
                             # print("size of the array B: ", B.shape)
@@ -395,7 +409,29 @@ for seed in args.seeds:
                             # c_matrix_np = np.dot(block.detach().cpu().numpy(),
                             #                         approx_pseudo)
                             # 8 for cifar10
-                            gamma_estimated = np.linalg.norm(B, 1)/len(B)/8 # 1 / lambda_hat
+                            frobi= np.linalg.norm(B, "fro")
+
+                            try:
+                                l2_norm_b = np.linalg.norm(B, 2)
+                                soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                                print("soft_rank_global", soft_rank_global)
+                                gamma_estimated = args.beta * np.trace(B)/len(B)/len(B)/math.sqrt(soft_rank_global)  # 1 / lambda_hat
+
+                            except Exception as e:
+                                print(e)
+                                try:
+                                    print("add to check numerical instability")
+                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    print("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = args.beta *np.trace(B)/len(B)/len(B)/math.sqrt(soft_rank_global)
+                                except Exception as e:
+                                    print(e)
+                                gamma_estimated = gamma_previous
+
+
+
+
                             gamma_estimated_list.append(gamma_estimated)
                             print("estimated gamma: ",gamma_estimated)
 
@@ -418,7 +454,11 @@ for seed in args.seeds:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
                             loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
-                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
+                            if gamma is None:
+                                loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                            else:
+
+                                loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
                             print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
                             # else:
                             #     loss = loss_tcr + gamma * loss_exp + args.beta  * loss_bl
@@ -499,10 +539,10 @@ for seed in args.seeds:
                     if previous_nmi is None:
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                              'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
+                             'gamma_estimated': gamma,
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               }])])
@@ -517,10 +557,10 @@ for seed in args.seeds:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                        gamma_before = gamma / constant_factor
+
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
                             [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                              'gamma_before_factoring': gamma_before , 'gamma_estimated': gamma,
+                               'gamma_estimated': gamma,
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               }])])
