@@ -335,10 +335,6 @@ for seed in args.seeds:
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
 
-
-
-                    # D_inv_sqrt = np.diag(1.0 / np.sqrt(d + 1e-7))
-                    # L = D_inv_sqrt @ L @ D_inv_sqrt
                     with torch.no_grad():
 
                         # add jitering:
@@ -363,52 +359,25 @@ for seed in args.seeds:
 
                             block = z.detach().clone().double()
 
-
-
                             G =  block @ block.T
                             diagIndices = np.diag_indices(G.shape[0])
 
-                            P = jnp.linalg.inv(G.detach().cpu().numpy())# imqrginv_fixed(G.detach().cpu().numpy())
-                            # print("shape of P is ", P.shape)
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())
 
                             P = np.array(P)
                             B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
                             B[diagIndices] = 0
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                         B)
-                            c_matrix = B
-                            L_b = np.diag(B.sum(1)) - B
-                            _, U_b = np.linalg.eigh(
-                                L_b)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            Ub_hat = U_b[:, :args.n_clusters]  # U is the eigenvectors
-                            Wb = Ub_hat @ Ub_hat.T
-                            B = B.T @ Wb#.detach().cpu().numpy()
-                            # print("B shape", B.shape)
-                            # print("size of the array c_matrix: ", c_matrix.shape )
-                            # print("size of the array block: ", block.shape)
-                            # print("size of the array B: ", B.shape)
 
-                            # to print descriptive statistics of a numpy array
-                            # tmp = pd.DataFrame(np.diag(c_matrix))
-                            # print("summary of coefficient matrices: ", tmp.describe()) # this is especially psueo inverse leads to identity matrices
+                            # c_matrix = B
+                            # L_b = np.diag(B.sum(1)) - B
+                            # _, U_b = np.linalg.eigh(
+                            #     L_b)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # Ub_hat = U_b[:, :args.n_clusters]  # U is the eigenvectors
+                            # Wb = Ub_hat @ Ub_hat.T
+                            B = B.T @ W # B.T @ Wb#.detach().cpu().numpy()
+
                             c_matrix = torch.from_numpy(c_matrix)
 
-                            ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                         approx_pseudo)
-                            # even older, no fast implementation
-                            # c_matrix = self_representation_ls(block.T)
-                            # c_matrix = block @ (
-                            #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            #
-                            #######################################
-
-                            # estimate \lambda:
-                            # lambda_hat = estimate_lambda_local(block.T.cpu().numpy(), B, args.n_clusters, eta = 10 )
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
-                            #                         approx_pseudo)
-                            # 8 for cifar10
                             frobi= np.linalg.norm(B, "fro")
 
                             try:
@@ -435,21 +404,7 @@ for seed in args.seeds:
                             gamma_estimated_list.append(gamma_estimated)
                             print("estimated gamma: ",gamma_estimated)
 
-                            # conver to laplacian matrix:
-                            # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
-                            # L_c = torch.diag(A.sum(1)) - A
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            # gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            # # print("current estimated gamma: ", gamma_estimated.item())
-                            # gamma_estimated_list.append(gamma_estimated.detach().cpu().numpy())
-
-                        # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:
-                        #     gamma = np.mean(np.array(gamma_estimated_list))
-                        #     gamma_estimated_list = []
                         if epoch >= total_wamup_steps+2:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
@@ -460,12 +415,11 @@ for seed in args.seeds:
 
                                 loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
                             print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
-                            # else:
-                            #     loss = loss_tcr + gamma * loss_exp + args.beta  * loss_bl
+
+
                         else:
                             loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-                        # if  epoch == total_wamup_steps + nb_steps_per_epoch +  1 and warmup_step!=-1:
-                        #     print(f"estimated gamma {gamma }, default gamma is {args.gamma}")
+
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())

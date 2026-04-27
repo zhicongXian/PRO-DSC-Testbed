@@ -46,7 +46,7 @@ from torch.amp import autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from model.model_with_transformer_encoder import PRO_DSC_Transformer
-from model.model import PRO_DSC
+from model.model import PRO_DSC, PRO_DSC_with_orthogonal_projection
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDatasetWithIDs, FeatureDataset
 from loss.loss_fn import TotalCodingRate
@@ -214,7 +214,7 @@ test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True
 
 #### construct the model:
 
-model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
+model = PRO_DSC_with_orthogonal_projection(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
 sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 quantile_prob = args.quantile_prob
 
@@ -398,9 +398,9 @@ for seed in args.seeds:
 
                             # estimate \lambda:
                             # lambda_hat = estimate_lambda_local(block.T.cpu().numpy(), B, args.n_clusters, eta = 10 )
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
-                            #                         approx_pseudo)
+                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                                                    approx_pseudo)
                             # 8 for cifar10
                             # frobi= np.linalg.norm(B, "fro")
                             #
@@ -426,15 +426,15 @@ for seed in args.seeds:
                             # print("estimated gamma: ",gamma_estimated)
 
                             # conver to laplacian matrix:
-                            A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
-                            L_c = torch.diag(A.sum(1)) - A
-                            _, c_u = torch.linalg.eigh(
-                                c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
+                            # L_c = torch.diag(A.sum(1)) - A
+                            # _, c_u = torch.linalg.eigh(
+                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            gamma_estimated =np.linalg.norm(B, 1)/args.bs/args.bs/4*args.beta#torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            print("current estimated gamma: ", gamma_estimated.item())
+                            gamma_estimated =(np.linalg.norm(c_matrix_np, 1)/args.bs/0.707*10)*args.beta#torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("current estimated gamma: ", gamma_estimated)
                             gamma_estimated_list.append(gamma_estimated)
 
                         # if (warmup_step-  total_wamup_steps -1) % nb_steps_per_epoch == 0   and warmup_step!=-1:# epoch > 0:

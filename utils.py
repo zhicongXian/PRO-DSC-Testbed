@@ -19,7 +19,7 @@ def update_pi_from_z(net):
         save_dict[pre + 'cluster' + post] = save_dict.pop(key)
 
     model_dict.update(save_dict)
-    log = net.load_state_dict(model_dict)
+    # log = net.load_state_dict(model_dict)
     # print(log)
     return net
 
