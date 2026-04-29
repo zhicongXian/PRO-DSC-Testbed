@@ -411,7 +411,7 @@ if __name__ == '__main__':
     count = 200
 
     if sweep_id == "":
-        sweep_id = wandb.sweep(sweep_config, project="pro_dsc_cifar")
+        sweep_id = wandb.sweep(sweep_config, project="pro_dsc_cifar_10_mcr"+'_'+global_config["experiment_name"])
 
     wandb.agent(
         sweep_id,
