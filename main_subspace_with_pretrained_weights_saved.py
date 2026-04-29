@@ -8,13 +8,14 @@ formatted_date = current_date.strftime('%m-%d')
 
 import argparse
 import yaml
+import pickle
 import torch
 import numpy as np
 import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.DSCNet import PRO_DSC
+from model.DSCNet import PRO_DSC, PRO_DSC_return_pre_feature
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
@@ -60,7 +61,7 @@ parser.add_argument('--warmup', type=int, default=-1,
 
 parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
-parser.add_argument('--validate_every', type=int, default=25,
+parser.add_argument('--validate_every', type=int, default=100,
                     help='validate to check the clustering performance')
 args = parser.parse_args()
 
@@ -80,7 +81,7 @@ dir_name = os.path.join(f'exps/{args.desc}')
 writer = init_pipeline(dir_name, args)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim,channels=args.channels,kernels=args.kernels).to(device)
+model = PRO_DSC_return_pre_feature(hidden_dim=args.hidden_dim, z_dim=args.z_dim,channels=args.channels,kernels=args.kernels).to(device)
 sink_layer = SinkhornDistance(args.pieta, max_iter=1)
 
 if args.data.lower() == 'orl':
@@ -153,7 +154,7 @@ with tqdm(total=args.epo) as progress_bar:
             x, y = x.float().to(device), y.to(device)
             y_np = y.detach().cpu().numpy()
             with autocast(enabled=True):
-                z, logits = model(x)
+                z, logits,_ = model(x)
                 self_coeff = (logits @ logits.T)
                 Sign_self_coeff = torch.sign(self_coeff)
                 
@@ -203,6 +204,25 @@ with tqdm(total=args.epo) as progress_bar:
                 
             if warmup_step == total_wamup_steps:
                 print("Warmup Ends...Start training...")
+                # here adds weight a feedforward to get the features:
+                pre_feature_list = []
+                y_list = []
+                with torch.no_grad():
+                    for _, (x, y) in enumerate(train_loader):
+                        x, y = x.float().to(device), y.to(device)
+                        y_np = y.detach().cpu().numpy()
+                        _, _, pre_ft = model(x)
+                        pre_feature_list.append(pre_ft.detach().cpu().numpy())
+                        y_list.append(y.detach().cpu().numpy())
+                    # add enough pre_ft:
+                    pre_fts= np.concatenate(pre_feature_list, axis=0)
+                    y_total = np.concatenate(y_list, axis=0)
+                    print("shape of pre_fts: ", pre_fts.shape)
+                    data_dict = {}
+                    data_dict['x'] = pre_fts
+                    data_dict['y'] = y_total # for coil is 7200, 12800,
+                    with open("{}/pre_features_{}.pkl".format(dir_name,args.data), "wb") as f:
+                        pickle.dump(data_dict, f)
                 model = update_pi_from_z(model)
 
             if warmup_step <= total_wamup_steps:
@@ -237,7 +257,7 @@ with tqdm(total=args.epo) as progress_bar:
                 for step, (x, y) in enumerate(test_loader):
                     x, y = x.float().to(device), y.to(device)
                     y_list.append(y.detach().cpu().numpy())
-                    z, logits = model(x)
+                    z, logits,_ = model(x)
                     logits_list.append(logits)
                     z_list.append(z)
                     

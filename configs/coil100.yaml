@@ -6,7 +6,7 @@ z_dim: 100
 n_clusters: 100
 epo: 10000
 lr: 1.e-4
-eps: 0.05
+eps: 0.0005
 data_dir: ./data/datasets/coil100.mat
 warmup: 0
 save_every: 50

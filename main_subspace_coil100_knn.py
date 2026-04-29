@@ -325,7 +325,7 @@ for seed in args.seeds:
                             diagIndices = np.diag_indices(G.shape[0])
 
                             P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
-                            # print("shape of P is ", P.shape)
+
 
                             P = np.array(P)
                             B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))

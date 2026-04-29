@@ -83,7 +83,7 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
     
     if normalize_embed:
         embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
-    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init)
+    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init) ##--TODO there is also a seed here to be set!!
     acc_lst = []
     nmi_lst = []
     pred_lst = []
@@ -108,7 +108,7 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
 
 
 def spectral_clustering_metrics_with_ari(A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
-                                extra_dim=0, tol=0):
+                                extra_dim=0, tol=0, seed = 10):
     """ n_init is number of separate runs of kmeans to average over
     computes average accuracy and nmi
     """
@@ -135,7 +135,7 @@ def spectral_clustering_metrics_with_ari(A, nclass, label, verbose=True, n_init=
 
     if normalize_embed:
         embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
-    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init)
+    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init, random_state=seed)
     acc_lst = []
     nmi_lst = []
     pred_lst = []

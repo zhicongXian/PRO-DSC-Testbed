@@ -70,8 +70,6 @@ parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
-parser.add_argument('--seed', type=int, default=1,
-                    help='model save every')
 
 ############## addtitional to this script:
 
@@ -92,7 +90,7 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if key == "experiment_name" or key =="seed":
+        if hasattr(args, key):
             continue
         setattr(args, key, value) # he does it another way around.
 args.desc = '_'.join(
@@ -194,7 +192,6 @@ def init_pipeline_with_config(model_dir, config):
 def train(config):
     previous_nmi = None
     same_seeds(config['seed'])
-    print("current seed: {}".format(config['seed']))
     ######load dataset ############
     train_loader, test_loader = load_dataset(config)
     ############### set up writer ##############################
@@ -217,7 +214,7 @@ def train(config):
     scaler = GradScaler()
 
     ### warmup iteration setting
-    warmup_epochs = config['warmup']
+    total_wamup_steps = config['warmup']
     warmup_step = 0
     result_df = pd.DataFrame()
     with tqdm(total=config['epo']) as progress_bar:
@@ -253,7 +250,7 @@ def train(config):
                         U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
 
-                    if epoch <= warmup_epochs:
+                    if warmup_step <= total_wamup_steps:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
@@ -266,7 +263,7 @@ def train(config):
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= total_wamup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -279,11 +276,11 @@ def train(config):
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == warmup_epochs:
+                if warmup_step == total_wamup_steps:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= total_wamup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
@@ -304,7 +301,7 @@ def train(config):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -323,7 +320,7 @@ def train(config):
 
                     y_np = np.concatenate(y_list, axis=0)
                     acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(
-                        self_coeff.detach().cpu().numpy(),config['n_clusters'], y_np,seed=config['seed'])
+                        self_coeff.detach().cpu().numpy(),config['n_clusters'], y_np)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, '
@@ -334,21 +331,6 @@ def train(config):
                           ' mean ari: {} max ari: {}, epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
                                                                     np.mean(nmi_lst), np.max(nmi_lst),
                                                                         np.mean(ari_lst), np.max(ari_lst), epoch))
-                    ###############logging:
-                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'dataset': config['data'].lower(), 'seed': config['seed'],
-                          'gamma': config['gamma'],
-                          'epoch': epoch, 'acc': np.mean(acc_lst),
-                          'nmi': np.mean(nmi_lst),
-                          'ari': np.mean(ari_lst),
-                          }])])
-
-
-                    result_df.to_csv(
-                        '{}/{}_{}.csv'.format(
-                            config['out_dir'], config['data'].lower(), config['experiment_name']), index=False,
-                        mode="a")
-
                     ######## add early stop ######################
                     early_stopper = EarlyStopper(patience=5)
                     if early_stopper.early_stop(-np.mean(ari_lst)):
@@ -360,16 +342,33 @@ def train(config):
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
+                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                            [{'dataset': config['data'].lower(), 'seed': config['seed'],
+                              'gamma': config['gamma'],
+                              'epoch': epoch, 'acc': np.mean(acc_lst),
+                              'nmi': np.mean(nmi_lst),
+                              'ari': np.mean(ari_lst),
+                              }])])
 
                         if not os.path.exists(config['out_dir']):
                             os.makedirs(config['out_dir'])
+                        result_df.to_csv(
+                            '{}/{}_{}.csv'.format(
+                                config['out_dir'], config['data'].lower(), config['experiment_name']), index=False)
 
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
+                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch, 'acc': np.mean(acc_lst),
+                              'nmi': np.mean(nmi_lst), 'ari': np.mean(ari_lst)
+                              }])])
 
+                        result_df.to_csv(
+                            '{}/{}_{}.csv'.format(
+                                config['out_dir'], config['data'].lower(),config['experiment_name']), index=False)
 
 
                     if wandb.run:
@@ -386,7 +385,7 @@ def train(config):
 def load_sweep_config():
     sweep_config = {"method": "grid"}
     parameters_dict = {}
-    gamma_list = list(np.linspace(10, 1000, 200))
+    gamma_list = list(np.linspace(10, 1000, 20))
     parameters_dict.update({'gamma':{"values":gamma_list}})
     eval_metric = {"name": "ari", "goal": "maximize"}
     sweep_config["parameters"] = parameters_dict

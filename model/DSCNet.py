@@ -171,3 +171,25 @@ class PRO_DSC(nn.Module):
         logits = F.normalize(logits, 2)
 
         return Z, logits
+
+
+class PRO_DSC_return_pre_feature(nn.Module):
+    def __init__(self, hidden_dim, z_dim, channels=[1, 10, 20, 30], kernels=[5, 3, 3]):
+        super().__init__()
+        self.pre_feature = ConvAE(channels, kernels)
+        self.subspace = nn.Sequential(
+            nn.Linear(hidden_dim, z_dim)
+        )
+        self.cluster = nn.Sequential(
+            nn.Linear(hidden_dim, z_dim)
+        )
+
+    def forward(self, x):
+        pre_feature = self.pre_feature(x)
+        pre_feature = pre_feature.view(pre_feature.shape[0], -1)
+        Z = self.subspace(pre_feature)
+        logits = self.cluster(pre_feature).float()
+        Z = F.normalize(Z, 2)
+        logits = F.normalize(logits, 2)
+
+        return Z, logits, pre_feature
