@@ -70,8 +70,7 @@ parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
-parser.add_argument('--seed', type=int, default=1,
-                    help='model save every')
+
 
 ############## addtitional to this script:
 
