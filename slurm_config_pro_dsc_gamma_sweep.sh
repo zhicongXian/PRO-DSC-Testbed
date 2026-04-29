@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=GammaMCRcifa10
+#SBATCH --job-name=GamSwMCRcifa10
 #SBATCH --output=cifa10.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
