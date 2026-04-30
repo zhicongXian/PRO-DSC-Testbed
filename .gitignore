@@ -25,3 +25,6 @@ l1cifa10_mcr_data_dependent_regularization_out.txt
 new_results
 default_cifa10_mcr_data_dependent_regularization.txt
 default_cifa10_mcr_data_dependent_regularization_out.txt
+evaluations
+orl_auto.txt
+orl_auto_out.txt

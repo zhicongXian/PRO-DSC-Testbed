@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=KnnCoil100
-#SBATCH --output=coil100_pretrain_knn.txt
+#SBATCH --job-name=AutoORL
+#SBATCH --output=orl_auto.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_coil100_knn.py --data=coil100 --bs=120 --load_pretrain  >> coil100_pretrain_knn_out.txt
+python3 ./main_subspace_auto_gamma.py --data=orl --experiment_name=orl_auto_gamma --load_pretrain  >> orl_auto_out.txt
 

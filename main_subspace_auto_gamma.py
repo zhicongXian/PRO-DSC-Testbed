@@ -516,7 +516,7 @@ for seed in args.seeds:
                             os.makedirs(args.out_dir)
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
 
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
@@ -533,4 +533,17 @@ for seed in args.seeds:
 
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
+
+                    else:
+                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                              'gamma_estimated': gamma,
+                              'acc': np.mean(acc_lst),
+                              'nmi': np.mean(nmi_lst),
+                              'ari': np.mean(ari_lst)
+                              }])])
+
+                        result_df.to_csv(
+                            '{}/{}_{}.csv'.format(
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")

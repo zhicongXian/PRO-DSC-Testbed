@@ -68,3 +68,33 @@ url={https://openreview.net/forum?id=7psWohxvxp}
 }
 
 ```
+
+How to use CPU on slurm bash script: 
+#SBATCH --partition=CPU
+#SBATCH --account=seidl
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=12:00:00
+
+Interactive example:
+
+srun -p CPU --account=seidl --cpus-per-task=8 --mem=32G --time=02:00:00 --pty bash
+[11:29 Uhr]The CPU partition currently has a maximum runtime of 7 days, so please keep --time within that limit.
+[11:30 Uhr]The head script be like this:
+
+#!/bin/bash
+#SBATCH --job-name=cpu_test
+#SBATCH --partition=CPU
+#SBATCH --account=seidl
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=12:00:00
+#SBATCH --output=cpu_job_%j.out
+#SBATCH --error=cpu_job_%j.err
+
+echo "Running on node: $(hostname)"
+echo "Allocated CPUs: $SLURM_CPUS_PER_TASK"
+
+python3 my_script.py
