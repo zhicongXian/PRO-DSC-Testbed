@@ -86,7 +86,7 @@ parser.add_argument('--input_dim', type=int, default=128,
 
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar10-mcr','cifar20','tinyimagenet','imagenet','imagenetdogs','coil100', 'orl']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
