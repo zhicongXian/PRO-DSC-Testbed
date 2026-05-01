@@ -28,3 +28,5 @@ default_cifa10_mcr_data_dependent_regularization_out.txt
 evaluations
 orl_auto.txt
 orl_auto_out.txt
+gamma_sweep_coil100.txt
+gamma_sweep_coil100_out.txt
