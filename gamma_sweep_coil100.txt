@@ -1,0 +1,96 @@
+worker-3
+/usr/bin/python3
+Fri May  1 21:38:32 2026       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.288.01             Driver Version: 535.288.01   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce RTX 3090        Off | 00000000:3C:00.0 Off |                  N/A |
+| 30%   35C    P8              22W / 350W |      0MiB / 24576MiB |      0%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+SHELL=/bin/bash
+SLURM_JOB_USER=xian
+SLURM_TASKS_PER_NODE=1
+SLURM_JOB_UID=33124
+TERM_PROGRAM_VERSION=3.4
+SLURM_TASK_PID=826268
+TMUX=/tmp/tmux-33124/default,3497316,4
+SLURM_JOB_GPUS=1
+SLURM_LOCALID=0
+SLURM_SUBMIT_DIR=/home/wiss/xian/Python_code/pro_dsc_testbed/PRO-DSC-Testbed
+HOSTNAME=worker-3
+SLURMD_NODENAME=worker-3
+SLURM_JOB_START_TIME=1777664312
+HYDRA_LAUNCHER_EXTRA_ARGS=--external-launcher
+SLURM_CLUSTER_NAME=cluster
+SLURM_JOB_END_TIME=1778528312
+SLURM_CPUS_ON_NODE=1
+SLURM_JOB_CPUS_PER_NODE=1
+SLURM_GPUS_ON_NODE=1
+PRTE_MCA_plm_slurm_args=--external-launcher
+PWD=/home/wiss/xian/Python_code/pro_dsc_testbed/PRO-DSC-Testbed
+SLURM_GTIDS=0
+LOGNAME=xian
+XDG_SESSION_TYPE=tty
+SLURM_JOB_PARTITION=all
+SLURM_JOB_NUM_NODES=1
+SLURM_JOBID=687051
+SLURM_JOB_QOS=normal
+I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS=--external-launcher
+HOME=/home/wiss/xian
+LANG=en_US.UTF-8
+SLURM_PROCID=0
+TMPDIR=/tmp
+SLURM_NTASKS=1
+SLURM_TOPOLOGY_ADDR=worker-3
+SSH_CONNECTION=141.84.16.68 62490 10.153.51.197 22
+HYDRA_BOOTSTRAP=slurm
+SLURM_TOPOLOGY_ADDR_PATTERN=node
+CUDA_VISIBLE_DEVICES=0
+XDG_SESSION_CLASS=user
+TERM=tmux-256color
+USER=xian
+TMUX_PANE=%4
+SLURM_NODELIST=worker-3
+ENVIRONMENT=BATCH
+SLURM_JOB_ACCOUNT=seidl
+SLURM_PRIO_PROCESS=0
+SLURM_NPROCS=1
+SHLVL=3
+SLURM_NNODES=1
+XDG_SESSION_ID=9858
+SLURM_SUBMIT_HOST=madeira.dbs.ifi.lmu.de
+XDG_RUNTIME_DIR=/run/user/33124
+SLURM_JOB_ID=687051
+SLURM_NODEID=0
+SSH_CLIENT=10.163.163.139 56362 22
+XDG_DATA_DIRS=/usr/local/share:/usr/share:/var/lib/snapd/desktop
+SLURM_CONF=/etc/slurm/slurm.conf
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+SLURM_JOB_NAME=GamSwCoil100
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/33124/bus
+SSH_TTY=/dev/pts/34
+OMPI_MCA_plm_slurm_args=--external-launcher
+SLURM_JOB_GID=12000
+OLDPWD=/home/wiss/xian/Python_code/pro_dsc_testbed/PRO-DSC-Testbed/data
+SLURM_JOB_NODELIST=worker-3
+TERM_PROGRAM=tmux
+I_MPI_HYDRA_BOOTSTRAP=slurm
+_=/usr/bin/env
+Traceback (most recent call last):
+  File "/home/wiss/xian/Python_code/pro_dsc_testbed/PRO-DSC-Testbed/./main_subspace_gamma_sweep.py", line 90, in <module>
+    assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Only cifar10,cifar100,cifar10-mcr are supported
