@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=AutoCoil100
+#SBATCH --job-name=42AutoCoil100
 #SBATCH --output=coil100_pretrain_knn.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_auto_gamma.py --data=coil100 --experiment_name=coil100_auto_gamma --load_pretrain  >> coil100_pretrain_knn_out.txt
+python3 ./main_subspace_auto_gamma.py --data=coil100 --experiment_name=coil100_auto_gamma_seed42 --seed=42 --load_pretrain  >> coil100_pretrain_knn_out.txt
 
