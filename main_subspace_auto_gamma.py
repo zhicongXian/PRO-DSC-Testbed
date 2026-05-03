@@ -80,9 +80,23 @@ parser.add_argument('--validate_every', type=int, default=25,
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-parser.add_argument('--seeds', type=int, default=[42],
-                    help='random seed')
+# parser.add_argument('--seeds', type=int, default=[42],
+#                     help='random seed')
 
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 
 args = parser.parse_args()
 
@@ -118,6 +132,8 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
+        if key == "seeds":
+            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
