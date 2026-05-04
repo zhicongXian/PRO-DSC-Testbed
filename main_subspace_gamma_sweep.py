@@ -271,7 +271,7 @@ def train(config):
     param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
     optimizer = optim.SGD(param_list, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'], nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=config['lr_c'], momentum=config['momo'], weight_decay=config['wd2'], nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd2'], nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
