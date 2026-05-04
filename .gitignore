@@ -32,3 +32,5 @@ gamma_sweep_coil100.txt
 gamma_sweep_coil100_out.txt
 rerun_gamma_sweep_coil100.txt
 rerun_gamma_sweep_coil100_out.txt
+default_subspace_coil.txt
+default_subspace_coil_out.txt
