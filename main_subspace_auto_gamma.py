@@ -504,7 +504,7 @@ for seed in args.seeds:
 
                     y_np = np.concatenate(y_list, axis=0)
                     acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),
-                                                                             args.n_clusters, y_np,n_init=2, seed=seed)
+                                                                             args.n_clusters, y_np,n_init=10, seed=seed)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(

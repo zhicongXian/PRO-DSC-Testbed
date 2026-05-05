@@ -253,14 +253,14 @@ def train(config):
                                        kernels=config['kernels']).to(device)
 
         temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'), strict=False)
-        sink_layer = SinkhornDistance(config['pieta'], max_iter=1)
+        sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
     elif config['data'].lower() == "orl":
 
         model = model_subspace.PRO_DSC(hidden_dim=config['hidden_dim'], z_dim=config['z_dim'], channels=config['channels'],
                                        kernels=config['kernels']).to(device)
         temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'), strict=False)
 
-        sink_layer = SinkhornDistance(config['pieta'], max_iter=1)
+        sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
     else:
         model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(device) # input_dim=768
         sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
@@ -272,7 +272,7 @@ def train(config):
     param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
     optimizer = optim.SGD(param_list, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'], nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=config['lr_c'], momentum=config['momo'], weight_decay=config['wd2'], nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd2'], nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
@@ -461,6 +461,7 @@ def interface_to_train():
             config[key] = wandb.config.as_dict().get(key)
 
 
+        print("config:", config)
 
         train(config)
 
