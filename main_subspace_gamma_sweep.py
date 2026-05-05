@@ -367,7 +367,7 @@ def train(config):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs:
+            if (epoch + 1) == config['epo']: #(epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
