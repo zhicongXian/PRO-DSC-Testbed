@@ -187,10 +187,12 @@ def load_dataset(config):
         test_labels = feature_dict['ys']
 
     #### construct dataloader for batch training
+    g = torch.Generator()
+    g.manual_seed(config["seed"])
     train_feature_set = FeatureDataset(train_features, train_labels)
-    train_loader = DataLoader(train_feature_set, batch_size=config['bs'], shuffle=True, drop_last=True)
+    train_loader = DataLoader(train_feature_set, batch_size=config['bs'], shuffle=True, drop_last=True, generator=g)
     test_feature_set = FeatureDataset(test_features, test_labels)
-    test_loader = DataLoader(test_feature_set, batch_size=config['bs'], shuffle=True, drop_last=False)
+    test_loader = DataLoader(test_feature_set, batch_size=config['bs'], shuffle=True, drop_last=False, generator=g)
 
     return train_loader, test_loader
 
@@ -248,6 +250,7 @@ def train(config):
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if config['data'].lower() == "coil100":
+        print("using coil100")
 
         model = model_subspace.PRO_DSC(hidden_dim=config['hidden_dim'], z_dim=config['z_dim'], channels=config['channels'],
                                        kernels=config['kernels']).to(device)
@@ -265,6 +268,7 @@ def train(config):
         model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(device) # input_dim=768
         sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
 
+    print("start training")
     #### loss of logdet()
     warmup_criterion = TotalCodingRate(eps=config['eps'])
 
@@ -437,7 +441,8 @@ def train(config):
                             "acc": np.mean(acc_lst),
                             "nmi": np.mean(nmi_lst),
                             "ari": np.mean(ari_lst),
-                            "gamma":config['gamma']
+                            "gamma":config['gamma'],
+                            "seed": config['seed'],
                         })
 
 
