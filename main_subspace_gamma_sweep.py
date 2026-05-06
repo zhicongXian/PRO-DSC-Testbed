@@ -288,6 +288,7 @@ def train(config):
     full_name = f"{model.__class__.__module__}.{model.__class__.__qualname__}"
     print("train model name: ",full_name)
     print("batch size: ", config['bs'])
+    print("before training configs:", config)
     with tqdm(total=config['epo']) as progress_bar:
         for epoch in range(config['epo']):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(config['epo']))
