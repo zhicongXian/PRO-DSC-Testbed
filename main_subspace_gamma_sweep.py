@@ -190,6 +190,7 @@ def load_dataset(config):
     #### construct dataloader for batch training
     g = torch.Generator()
     g.manual_seed(config["seed"])
+    print("batch size in func load_dataset: ", config['bs'])
     train_feature_set = FeatureDataset(train_features, train_labels)
     train_loader = DataLoader(train_feature_set, batch_size=config['bs'], shuffle=True, drop_last=True, generator=g)
     test_feature_set = FeatureDataset(test_features, test_labels)
@@ -287,7 +288,7 @@ def train(config):
     result_df = pd.DataFrame()
     full_name = f"{model.__class__.__module__}.{model.__class__.__qualname__}"
     print("train model name: ",full_name)
-    print("batch size: ", config['bs'])
+
     print("before training configs:", config)
     with tqdm(total=config['epo']) as progress_bar:
         for epoch in range(config['epo']):
@@ -299,7 +300,7 @@ def train(config):
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
                 y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
+                with torch.amp.autocast('cuda',enabled=True):# autocast(enabled=True):
                     z, logits = model(x)
                     self_coeff = (logits @ logits.T)
                     Sign_self_coeff = torch.sign(self_coeff)
