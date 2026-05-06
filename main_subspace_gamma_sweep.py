@@ -134,6 +134,7 @@ def load_dataset(config):
                 test_labels = full_labels[-10000:]
             train_ids = np.arange(len(train_labels))
     elif args.data.lower() == "coil100":
+        print("loading coil100 dataset")
 
         data = sio.loadmat(args.data_dir)
         x, y = data['fea'].reshape((-1, 1, 32, 32)), data[
@@ -283,6 +284,8 @@ def train(config):
     warmup_epochs = config['warmup']
     warmup_step = 0
     result_df = pd.DataFrame()
+    full_name = f"{model.__class__.__module__}.{model.__class__.__qualname__}"
+    print("train model name: ",full_name)
     with tqdm(total=config['epo']) as progress_bar:
         for epoch in range(config['epo']):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(config['epo']))
@@ -304,7 +307,7 @@ def train(config):
                     Pi = Pi * Pi.shape[-1]
                     self_coeff = Pi[0]
                     # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff)) # here he also does this!
+                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
 
                     ### compute the affinity matrix
                     A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
@@ -313,23 +316,24 @@ def train(config):
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
                         _, U = torch.linalg.eigh(L)
-                        U_hat = U[:, :config['n_clusters']]
+                        U_hat = U[:, :args.n_clusters]
                         W = U_hat @ U_hat.T
 
-                    if epoch <= warmup_epochs:
+                    if warmup_step <= warmup_epochs:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
-                        loss_tcr = warmup_criterion(z) # logdet() loss
-                        loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / config['bs'] # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / config['bs'] # r() loss
+                        loss_tcr = warmup_criterion(z)  # logdet() loss
+                        loss_exp = 0.5 * (torch.linalg.norm(
+                            z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / args.bs  # ||Z-ZC||_F loss
+                        loss_bl = torch.trace(L.T @ W) / args.bs  # r() loss
                         loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= warmup_epochs:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -342,11 +346,11 @@ def train(config):
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == warmup_epochs:
+                if warmup_step == warmup_epochs:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= warmup_epochs:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
