@@ -313,63 +313,32 @@ def train(config):
                             np.mean(acc_lst), np.max(acc_lst),
                             np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
 
-                    if previous_nmi is None:
-                        previous_nmi = np.mean(nmi_lst)
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+                    if not os.path.exists(config['out_dir']):
+                        os.makedirs(config['out_dir'])
+
+                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                        [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
+                          'gamma': config['gamma'],
+
+                          'acc': np.mean(acc_lst),
+                          'nmi': np.mean(nmi_lst),
+                          'ari': np.mean(ari_lst)
+                          }])])
+                    result_df.to_csv(
+                        '{}/{}_{}.csv'.format(
+                            config['out_dir'], config['data'].lower(), config['experiment_name']), index=False,
+                        mode="a")
 
 
-
-                        if not os.path.exists(config['out_dir']):
-                            os.makedirs(config['out_dir'])
-
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
-                              'gamma': config['gamma'],
-
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
-
-                    elif np.mean(nmi_lst) > previous_nmi:
-                        previous_nmi = np.mean(nmi_lst)
-
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
-                              'gamma': config['gamma'],
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
-
-                    else:
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
-                              'gamma': config['gamma'],
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
-                        if wandb.run:
-                            wandb.log({
-                                "epoch": epoch,
-                                "acc": np.mean(acc_lst),
-                                "nmi": np.mean(nmi_lst),
-                                "ari": np.mean(ari_lst),
-                                "gamma": config['gamma'],
-                                "seed": config['seed'],
-                            })
+                    if wandb.run:
+                        wandb.log({
+                            "epoch": epoch,
+                            "acc": np.mean(acc_lst),
+                            "nmi": np.mean(nmi_lst),
+                            "ari": np.mean(ari_lst),
+                            "gamma": config['gamma'],
+                            "seed": config['seed'],
+                        })
 
 def load_sweep_config():
     sweep_config = {"method": "grid"}
