@@ -66,6 +66,7 @@ parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
 parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
+parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 args = parser.parse_args()
 
 datasets_list = ['eyaleb', 'coil100', 'orl']
