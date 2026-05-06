@@ -194,7 +194,7 @@ def load_dataset(config):
     test_feature_set = FeatureDataset(test_features, test_labels)
     test_loader = DataLoader(test_feature_set, batch_size=config['bs'], shuffle=True, drop_last=False, generator=g)
 
-    return train_loader, test_loader
+    return train_loader, test_loader, config
 
 
 ################################custom model log files #####################
@@ -242,7 +242,7 @@ def train(config):
     same_seeds(config['seed'])
     print("current seed: {}".format(config['seed']))
     ######load dataset ############
-    train_loader, test_loader = load_dataset(config)
+    train_loader, test_loader, config  = load_dataset(config)
     ############### set up writer ##############################
     desc = config['desc']
     dir_name = os.path.join(f'exps/{desc}')
