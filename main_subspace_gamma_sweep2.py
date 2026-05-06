@@ -75,7 +75,7 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs', '{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if key == "experiment_name":
+        if key == "experiment_name" or key == "seed":
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
@@ -127,8 +127,8 @@ def train(config):
     writer = init_pipeline_with_config(dir_name, config)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(device)
-    sink_layer = SinkhornDistance(args.pieta, max_iter=1)
+    model = PRO_DSC(hidden_dim=config['hidden_dim'], z_dim=config['z_dim'], channels=config['channels'], kernels=config['kernels']).to(device)
+    sink_layer = SinkhornDistance(config['pieta'], max_iter=1)
 
     if config['data'].lower() == 'orl':
         # Loading features and labels
@@ -187,6 +187,7 @@ def train(config):
     ### warmup iteration setting
     total_wamup_steps = config['warmup']
     warmup_step = 0
+    print("before training configs:", config)
 
     with tqdm(total=config['epo']) as progress_bar:
         for epoch in range(config['epo']):
@@ -198,7 +199,7 @@ def train(config):
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
                 y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
+                with torch.amp.autocast('cuda', enabled=True):
                     z, logits = model(x)
                     self_coeff = (logits @ logits.T)
                     Sign_self_coeff = torch.sign(self_coeff)
@@ -269,11 +270,11 @@ def train(config):
                 else:
                     writer.add_scalar(k, 0, global_step=epoch)
 
-            if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
+            if (epoch + 1) % config['save_every'] == 0 or (epoch + 1) == config['epo']:
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -299,7 +300,7 @@ def train(config):
                     y_np = np.concatenate(y_list, axis=0)
                     acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(
                         self_coeff.detach().cpu().numpy(),
-                        args.n_clusters, y_np, n_init=10, seed=seed)
+                        config['n_clusters'], y_np, n_init=10, seed=config['seed'])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
@@ -315,19 +316,22 @@ def train(config):
                         previous_nmi = np.mean(nmi_lst)
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
+
+
+                        if not os.path.exists(config['out_dir']):
+                            os.makedirs(config['out_dir'])
+
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
+                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
+                              'gamma': config['gamma'],
+
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               'ari': np.mean(ari_lst)
                               }])])
-
-                        if not os.path.exists(args.out_dir):
-                            os.makedirs(args.out_dir)
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
+                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
 
                     elif np.mean(nmi_lst) > previous_nmi:
                         previous_nmi = np.mean(nmi_lst)
@@ -335,30 +339,57 @@ def train(config):
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
+                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
+                              'gamma': config['gamma'],
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               'ari': np.mean(ari_lst)
                               }])])
-
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
+                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
 
                     else:
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
+                            [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
+                              'gamma': config['gamma'],
                               'acc': np.mean(acc_lst),
                               'nmi': np.mean(nmi_lst),
                               'ari': np.mean(ari_lst)
                               }])])
-
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")                                                                    epoch))
+                                config['out_dir'],config['data'].lower(), config['experiment_name']), index=False, mode="a")
+                        if wandb.run:
+                            wandb.log({
+                                "epoch": epoch,
+                                "acc": np.mean(acc_lst),
+                                "nmi": np.mean(nmi_lst),
+                                "ari": np.mean(ari_lst),
+                                "gamma": config['gamma'],
+                                "seed": config['seed'],
+                            })
 
+def load_sweep_config():
+    sweep_config = {"method": "grid"}
+    parameters_dict = {}
+    gamma_list = [200]+np.arange(30, 1000, 10).tolist()+[10,20]
+    parameters_dict.update({'gamma':{"values":gamma_list}})
+    eval_metric = {"name": "ari", "goal": "maximize"}
+    sweep_config["parameters"] = parameters_dict
+    sweep_config["metric"] = eval_metric
+
+    return sweep_config
+
+
+def interface_to_train():
+    config = global_config
+    with wandb.init(project="pro_dsc"+'_'+config["experiment_name"], config=config):
+
+        for key in wandb.config.as_dict():
+            config[key] = wandb.config.as_dict().get(key)
+
+        train(config)
 
 if __name__ == '__main__':
     sweep_config = load_sweep_config()

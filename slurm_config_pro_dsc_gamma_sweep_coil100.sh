@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_sweep.py --data=coil100 --experiment_name=wandb_sweep_coil100_rerun2  >> rerun_gamma_sweep_coil100_out.txt
+python3 ./main_subspace_gamma_sweep2.py --data=coil100 --experiment_name=wandb_sweep_coil100_refactored_from_default_code  >> rerun_gamma_sweep_coil100_out.txt
 
