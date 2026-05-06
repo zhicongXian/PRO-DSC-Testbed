@@ -250,6 +250,7 @@ def train(config):
     writer = init_pipeline_with_config(dir_name, config)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     if config['data'].lower() == "coil100":
         print("using coil100")
 
@@ -286,6 +287,7 @@ def train(config):
     result_df = pd.DataFrame()
     full_name = f"{model.__class__.__module__}.{model.__class__.__qualname__}"
     print("train model name: ",full_name)
+    print("batch size: ", config['bs'])
     with tqdm(total=config['epo']) as progress_bar:
         for epoch in range(config['epo']):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(config['epo']))
