@@ -456,7 +456,7 @@ def train(config):
 def load_sweep_config():
     sweep_config = {"method": "grid"}
     parameters_dict = {}
-    gamma_list = np.arange(30, 1000, 10).tolist()+[10,20]
+    gamma_list = [200]+np.arange(30, 1000, 10).tolist()+[10,20]
     parameters_dict.update({'gamma':{"values":gamma_list}})
     eval_metric = {"name": "ari", "goal": "maximize"}
     sweep_config["parameters"] = parameters_dict
