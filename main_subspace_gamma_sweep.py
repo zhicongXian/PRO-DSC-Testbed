@@ -133,10 +133,10 @@ def load_dataset(config):
                 train_labels = full_labels[:50000]
                 test_labels = full_labels[-10000:]
             train_ids = np.arange(len(train_labels))
-    elif args.data.lower() == "coil100":
+    elif  config['data'].lower() == "coil100":
         print("loading coil100 dataset")
 
-        data = sio.loadmat(args.data_dir)
+        data = sio.loadmat(config['data_dir'])
         x, y = data['fea'].reshape((-1, 1, 32, 32)), data[
             'gnd']  # he has another parameter setting than the original dataset 128 x 128 x3
         y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
@@ -148,7 +148,7 @@ def load_dataset(config):
     # here space for orl eylab
     elif config['data'].lower()  == 'orl':
         # Loading features and labels
-        data = sio.loadmat(args.data_dir)
+        data = sio.loadmat(config['data_dir'])
         x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y']  # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
         y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
 
@@ -316,7 +316,7 @@ def train(config):
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
                         _, U = torch.linalg.eigh(L)
-                        U_hat = U[:, :args.n_clusters]
+                        U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
 
                     if warmup_step <= warmup_epochs:
@@ -325,8 +325,8 @@ def train(config):
                     else:
                         loss_tcr = warmup_criterion(z)  # logdet() loss
                         loss_exp = 0.5 * (torch.linalg.norm(
-                            z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / args.bs  # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / args.bs  # r() loss
+                            z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / config['bs']   # ||Z-ZC||_F loss
+                        loss_bl = torch.trace(L.T @ W) / config['bs']  # r() loss
                         loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
