@@ -221,7 +221,26 @@ def train(config):
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
+                        try:
+                            _, U = torch.linalg.eigh(L) # to do what happen when pytorch fail to converge?
+                        except Exception as e:
+                            print(e)
+                            assert torch.isfinite(L).all(), "A contains NaN or Inf"
+                            A = L.to(torch.float64)
+
+                            # Force symmetry / Hermitian
+                            A = 0.5 * (A + A.mH)
+
+                            # Normalize scale to avoid huge/small values
+                            scale = A.norm(dim=(-2, -1), keepdim=True).clamp_min(torch.finfo(A.dtype).tiny)
+                            A = A / scale
+
+                            # Ridge regularization: good for covariance / PSD matrices
+                            I = torch.eye(A.shape[-1], device=A.device, dtype=A.dtype)
+                            eps = torch.finfo(A.dtype).tiny
+                            A = A + eps * I
+
+                            _, U = torch.linalg.eigh(A)
                         U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
 
@@ -317,7 +336,7 @@ def train(config):
 
                     if not os.path.exists(config['out_dir']):
                         os.makedirs(config['out_dir'])
-
+                    result_df = pd.DataFrame()
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
                           'gamma': config['gamma'],
