@@ -89,7 +89,7 @@ dir_name = os.path.join(f'exps/{args.desc}')
 writer = init_pipeline(dir_name, args)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
+model = PRO_DSC(input_dim=args.input_dim, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
 sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 
 # Loading features and labels

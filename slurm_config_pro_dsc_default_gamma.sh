@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=DataDe
+#SBATCH --job-name=DefaultGamma_cifar10_mcr
 #SBATCH --output=default_cifa10_mcr_data_dependent_regularization.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
