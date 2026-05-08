@@ -109,6 +109,23 @@ parser.add_argument('--seeds', type=int, default=[1,2],
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
+
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+
+
+
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr','imagenet']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
