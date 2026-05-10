@@ -290,7 +290,7 @@ for seed in args.seeds:
                         loss_tcr = warmup_criterion(z) # logdet() loss
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(self_coeff) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
-                        if epoch >= total_wamup_epochs + 2:
+                        if epoch >= total_wamup_steps + 2:
 
                             loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
 
