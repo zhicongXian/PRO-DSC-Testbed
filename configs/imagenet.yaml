@@ -13,3 +13,4 @@ data_dir: ./data/datasets/imagenet_train_clip.pt
 data_dir_val: ./data/datasets/imagenet_val_clip.pt
 warmup: 2000
 save_every: 25
+input_dim: 768

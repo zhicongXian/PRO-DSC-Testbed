@@ -6,13 +6,13 @@ from distributed.utils_test import double
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import numpy as np
-
+import scipy
 from lambda_utils.lambda_estimate_utils import estimate_lambda_local
 
 
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
-    q, r = jnp.linalg.qr(a, mode="reduced")
+    q, r = jnp.linalg.qr(a, mode="reduced", rtol=1e-10)
 
     r_take = np.any(np.abs(r) > tol, axis=1)
     r = r[r_take, ::]
@@ -23,7 +23,7 @@ def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
             a=r @ r.T,
             b=r,
             assume_a="pos",
-            check_finite=False,
+            check_finite=True,
             overwrite_a=True,
             overwrite_b=True,
         ))
@@ -52,7 +52,7 @@ from data.data_utils import FeatureDatasetWithIDs, FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from lambda_utils import *
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -103,12 +103,28 @@ parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
 parser.add_argument('--quantile_prob', type=float, default=0.99)
 
-parser.add_argument('--seeds', type=int, default=[1,2],
-                    help='seeds')
 
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
+
+# parser.add_argument('--seeds', type=int, default=[42],
+#                     help='random seed')
+
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
@@ -214,7 +230,7 @@ test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True
 
 #### construct the model:
 
-model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
+model = PRO_DSC_with_orthogonal_projection(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
 sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 quantile_prob = args.quantile_prob
 
@@ -356,8 +372,9 @@ for seed in args.seeds:
 
                             G =  block @ block.T
                             diagIndices = np.diag_indices(G.shape[0])
-
-                            P = jnp.linalg.inv(G.detach().cpu().numpy())
+                            print("G has nan: ",torch.isnan(G).any().item())
+                            P = jnp.linalg.pinv(G.detach().cpu().numpy(), rtol=1e-10)
+                            #P =imqrginv_fixed(G.detach().cpu().numpy())# jnp.linalg.inv(G.detach().cpu().numpy())
                             # without excluding the diagonal elements:
 
                             ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
@@ -388,9 +405,13 @@ for seed in args.seeds:
                             #######################################
 
                             P = np.array(P)
-                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
+                            print("P has nan:", np.isnan(P).any())
+
+                            B = P / (-np.diag(P) + 1e-14 * np.eye(G.shape[0]) )
                             B[diagIndices] = 0
+                            print("B has nan:", np.isnan(B).any())
                             B = B.T @ W.detach().cpu().numpy()
+                            print("W has nan:", torch.isnan(W).any().item())
                              # this is especially psueo inverse leads to identity matrices
 
                             frobi= np.linalg.norm(B, "fro")
@@ -404,8 +425,22 @@ for seed in args.seeds:
                             except Exception as e:
                                 print(e)
                                 try: #  retrial for SVD computation
+                                    # print debug diagnostics:
+                                    print("final B has nan:", np.isnan(B).any())
+                                    print("has inf:", np.isinf(B).any())
+                                    print("min:", B.min())
+                                    print("max:", B.max())
+                                    print("dtype:", B.dtype)
+
+
                                     print("add to check numerical instability")
-                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    s = scipy.linalg.svd(
+                                        B, compute_uv=False,
+                                        full_matrices=False,
+                                        lapack_driver="gesvd",  # often more robust fallback
+                                        check_finite=True
+                                    )
+                                    l2_norm_b = s[0]
                                     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                     print("soft_rank_global", soft_rank_global)
                                     gamma_estimated = args.beta * soft_rank_global/4
@@ -493,47 +528,76 @@ for seed in args.seeds:
 
 
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np)
+
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                                                                                                                                     seed = seed)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
-                        f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                                                            np.mean(nmi_lst), np.max(nmi_lst),np.mean(ari_lst), np.max(ari_lst), epoch))
-                    print('Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                                                            np.mean(nmi_lst), np.max(nmi_lst),np.mean(ari_lst), np.max(ari_lst), epoch))
+                        f.write(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                    print(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
 
-                    if previous_nmi is None:
-                        previous_nmi = np.mean(nmi_lst)
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                        [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                          'acc': np.mean(acc_lst),
+                          'nmi': np.mean(nmi_lst),
+                          'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst)
+                          }])])
 
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                             'gamma_estimated': gamma,
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
+                    result_df.to_csv(
+                        '{}/{}_{}.csv'.format(
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
 
-                        if not os.path.exists(args.out_dir):
-                            os.makedirs(args.out_dir)
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
-                    elif np.mean(nmi_lst) > previous_nmi:
-                        previous_nmi = np.mean(nmi_lst)
 
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
-                               'gamma_estimated': gamma,
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                    # acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np)
+                    # writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+                    # with open('{}/acc.txt'.format(dir_name), 'a') as f:
+                    #     f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
+                    #                                                                         np.mean(nmi_lst), np.max(nmi_lst),np.mean(ari_lst), np.max(ari_lst), epoch))
+                    # print('Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
+                    #                                                                         np.mean(nmi_lst), np.max(nmi_lst),np.mean(ari_lst), np.max(ari_lst), epoch))
+                    #
+                    # if previous_nmi is None:
+                    #     previous_nmi = np.mean(nmi_lst)
+                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+                    #
+                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
+                    #          'gamma_estimated': gamma,
+                    #           'acc': np.mean(acc_lst),
+                    #           'nmi': np.mean(nmi_lst),
+                    #           'ari': np.mean(ari_lst)
+                    #           }])])
+                    #
+                    #     if not os.path.exists(args.out_dir):
+                    #         os.makedirs(args.out_dir)
+                    #     result_df.to_csv(
+                    #         '{}/{}_{}.csv'.format(
+                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                    #
+                    # elif np.mean(nmi_lst) > previous_nmi:
+                    #     previous_nmi = np.mean(nmi_lst)
+                    #
+                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+                    #
+                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default':args.gamma,
+                    #            'gamma_estimated': gamma,
+                    #           'acc': np.mean(acc_lst),
+                    #           'nmi': np.mean(nmi_lst),
+                    #           'ari': np.mean(ari_lst)
+                    #           }])])
+                    #
+                    #     result_df.to_csv(
+                    #         '{}/{}_{}.csv'.format(
+                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
 

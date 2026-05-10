@@ -22,7 +22,7 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari
 import torch.nn.functional as F
 import scipy.io as sio
 from model.DSCNet import PRO_DSC
@@ -80,23 +80,9 @@ parser.add_argument('--validate_every', type=int, default=25,
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-# parser.add_argument('--seeds', type=int, default=[42],
-#                     help='random seed')
+parser.add_argument('--seeds', type=int, default=[42],
+                    help='random seed')
 
-def parse_list(value):
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
-
-    if not isinstance(parsed, list):
-        raise argparse.ArgumentTypeError("Argument must be a JSON list")
-
-    return parsed
-
-
-parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
-# Use like:
 
 args = parser.parse_args()
 
@@ -132,8 +118,6 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if key == "seeds":
-            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
@@ -161,7 +145,7 @@ if args.data.lower() in ['cifar10','cifar100','cifar20']:
         from data.dataset import sparse2coarse
         y_labels = torch.from_numpy(sparse2coarse(y_labels))
         y_test = torch.from_numpy(sparse2coarse(y_test))
-    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
+    model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 elif args.data.lower() == "coil100":
     if args.load_pretrain:
@@ -265,8 +249,7 @@ else:
     y_test = feature_dict['ys']
     model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
-#### construct dataloader for batch training
-args.bs = num_sample
+#### construct dataloader for batch training  
 train_feature_set = FeatureDataset(x_train, y_labels)
 train_loader = DataLoader(train_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
 feature_set_test = FeatureDataset(x_test, y_test)
@@ -318,7 +301,7 @@ for seed in args.seeds:
 
                 if gamma_previous is None:
                     gamma_previous = gamma
-                elif gamma_previous < gamma:
+                elif gamma_previous > gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
@@ -504,80 +487,50 @@ for seed in args.seeds:
                     self_coeff = Pi[0]
 
                     y_np = np.concatenate(y_list, axis=0)
-
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(
-                        self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
-                        seed=seed)
+                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),
+                                                                             args.n_clusters, y_np,n_init=2, seed=seed)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
-
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
-                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
-                                np.max(sde_lst), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
                     print(
-                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                        'Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
                             np.mean(acc_lst), np.max(acc_lst),
-                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
-                            np.max(sde_lst), epoch))
+                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
 
-                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                          'acc': np.mean(acc_lst),
-                          'nmi': np.mean(nmi_lst),
-                          'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
-                          }])])
+                    if previous_nmi is None:
+                        previous_nmi = np.mean(nmi_lst)
+                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
-                    result_df.to_csv(
-                        '{}/{}_{}.csv'.format(
-                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
+                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                              'gamma_estimated': gamma,
+                              'acc': np.mean(acc_lst),
+                              'nmi': np.mean(nmi_lst),
+                              'ari': np.mean(ari_lst)
+                              }])])
 
-                    # if previous_nmi is None:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     if not os.path.exists(args.out_dir):
-                    #         os.makedirs(args.out_dir)
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # elif np.mean(nmi_lst) > previous_nmi:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # else:
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
+                        if not os.path.exists(args.out_dir):
+                            os.makedirs(args.out_dir)
+                        result_df.to_csv(
+                            '{}/{}_{}.csv'.format(
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+
+                    elif np.mean(nmi_lst) > previous_nmi:
+                        previous_nmi = np.mean(nmi_lst)
+
+                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+
+                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                              'gamma_estimated': gamma,
+                              'acc': np.mean(acc_lst),
+                              'nmi': np.mean(nmi_lst),
+                              'ari': np.mean(ari_lst)
+                              }])])
+
+                        result_df.to_csv(
+                            '{}/{}_{}.csv'.format(
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False)

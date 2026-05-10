@@ -21,10 +21,11 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics_with_ari
+from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import scipy.io as sio
 import pandas as pd
 import wandb
+import time
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -193,6 +194,7 @@ def train(config):
     print("before training configs:", config)
 
     with tqdm(total=config['epo']) as progress_bar:
+        t_begin = time.time()
         for epoch in range(config['epo']):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(config['epo']))
             model.train()
@@ -299,6 +301,7 @@ def train(config):
             if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
+                t_end = time.time()
                 with torch.no_grad():
                     logits_list = []
                     z_list = []
@@ -320,35 +323,35 @@ def train(config):
                     self_coeff = Pi[0]
 
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(
-                        self_coeff.detach().cpu().numpy(),
-                        config['n_clusters'], y_np, n_init=10, seed=config['seed'])
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(
+                        self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
+                        seed=config['seed'])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
-                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                                np.max(sde_lst), epoch))
                     print(
-                        'Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                             np.mean(acc_lst), np.max(acc_lst),
-                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                            np.max(sde_lst), epoch))
 
-                    if not os.path.exists(config['out_dir']):
-                        os.makedirs(config['out_dir'])
-                    result_df = pd.DataFrame()
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'seq_name': config['data'].lower(), 'seed': config['seed'], 'epoch': epoch,
-                          'gamma': config['gamma'],
-
+                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma': config['gamma'],
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
-                          'ari': np.mean(ari_lst)
+                          'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst)
                           }])])
+
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
-                            config['out_dir'], config['data'].lower(), config['experiment_name']), index=False,
-                        mode="a")
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
+
 
 
                     if wandb.run:
@@ -359,6 +362,7 @@ def train(config):
                             "ari": np.mean(ari_lst),
                             "gamma": config['gamma'],
                             "seed": config['seed'],
+                            'subspace_discovery_err:': np.mean(sde_lst)
                         })
 
 def load_sweep_config():

@@ -194,23 +194,30 @@ elif args.data.lower() == "coil100":
 
 
         # prepare them for the new features and labels input:
-        # new_ft = []
-        # labels = []
-        #
-        #
-        # dscnet.eval()
-        # # raw feature dataset:
-        # row_ft_set = FeatureDataset(x, y)
-        # pre_train_loader = DataLoader(row_ft_set, batch_size=args.bs, shuffle=True, drop_last=True)
-        # for x, y in pre_train_loader:
-        #     x = x.to(device)
-        #     _, z, _ = dscnet(x)
-        #     new_ft.append(z.detach().cpu().numpy())
-        #     labels.append(y.detach().cpu().numpy())
-        # clip_features = np.concatenate(new_ft)
-        # clip_labels = np.concatenate(labels)
-        # clip_features_test = clip_features
-        # clip_labels_test = clip_labels
+        new_ft = []
+        labels = []
+
+
+        dscnet.eval()
+        # raw feature dataset:
+        row_ft_set = FeatureDataset(x, y)
+        pre_train_loader = DataLoader(row_ft_set, batch_size=100, shuffle=True, drop_last=True)
+        for x, y in pre_train_loader:
+            x = x.to(device)
+            z= dscnet.ae.encoder(x)
+            new_ft.append(z.detach().cpu().numpy())
+            labels.append(y.detach().cpu().numpy())
+        clip_features = np.concatenate(new_ft)
+        clip_labels = np.concatenate(labels)
+        clip_features_test = clip_features
+        clip_labels_test = clip_labels
+
+        print("shape of pre_fts: ", clip_features.shape)
+        data_dict = {}
+        data_dict['x'] = clip_features
+        data_dict['y'] = clip_labels  # for coil is 7200, 12800,
+        with open("{}/pre_features_{}.pkl".format(dir_name, args.data), "wb") as f:
+            pickle.dump(data_dict, f)
 
     else:
         with open(args.data_dir, 'rb') as f:

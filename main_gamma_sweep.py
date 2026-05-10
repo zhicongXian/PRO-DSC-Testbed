@@ -21,7 +21,7 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -321,32 +321,33 @@ def train(config):
                     self_coeff = (logits @ logits.T).abs()
 
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(
-                        self_coeff.detach().cpu().numpy(),config['n_clusters'], y_np,seed=config['seed'])
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                                                                                                                                     seed=config['seed'])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
-                        f.write('Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, '
-                                'epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                    np.mean(nmi_lst), np.max(nmi_lst),
-                                                    np.mean(ari_lst), np.max(ari_lst), epoch))
-                    print('Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {} ,'
-                          ' mean ari: {} max ari: {}, epoch {}\n'.format(np.mean(acc_lst), np.max(acc_lst),
-                                                                    np.mean(nmi_lst), np.max(nmi_lst),
-                                                                        np.mean(ari_lst), np.max(ari_lst), epoch))
-                    ###############logging:
+                        f.write(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                    print(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'dataset': config['data'].lower(), 'seed': config['seed'],
-                          'gamma': config['gamma'],
-                          'epoch': epoch, 'acc': np.mean(acc_lst),
+                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': args.gamma,
+                          'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst)
                           }])])
-
 
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
-                            config['out_dir'], config['data'].lower(), config['experiment_name']), index=False,
-                        mode="a")
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
+
+
 
                     ######## add early stop ######################
                     early_stopper = EarlyStopper(patience=5)
@@ -368,15 +369,13 @@ def train(config):
 
                         torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
 
-
-
-
                     if wandb.run:
                         wandb.log({
                             "epoch": epoch,
                             "acc": np.mean(acc_lst),
                             "nmi": np.mean(nmi_lst),
                             "ari": np.mean(ari_lst),
+                            'subspace discovery error': np.mean(sde_lst),
                             "gamma":config['gamma']
                         })
 

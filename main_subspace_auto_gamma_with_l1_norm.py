@@ -161,7 +161,7 @@ if args.data.lower() in ['cifar10','cifar100','cifar20']:
         from data.dataset import sparse2coarse
         y_labels = torch.from_numpy(sparse2coarse(y_labels))
         y_test = torch.from_numpy(sparse2coarse(y_test))
-    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
+    model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 elif args.data.lower() == "coil100":
     if args.load_pretrain:
@@ -265,8 +265,8 @@ else:
     y_test = feature_dict['ys']
     model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
-#### construct dataloader for batch training
 args.bs = num_sample
+#### construct dataloader for batch training  
 train_feature_set = FeatureDataset(x_train, y_labels)
 train_loader = DataLoader(train_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
 feature_set_test = FeatureDataset(x_test, y_test)
@@ -318,7 +318,7 @@ for seed in args.seeds:
 
                 if gamma_previous is None:
                     gamma_previous = gamma
-                elif gamma_previous < gamma:
+                elif gamma_previous > gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
@@ -359,64 +359,74 @@ for seed in args.seeds:
 
                     # here estimate the gamma:
                     if epoch > total_wamup_epochs:
-                        block = z.detach().clone().double()
+                        with torch.no_grad():
+                            block = z.detach().clone().double()
 
-                        # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                        # c_matrix = np.dot(block.detach().cpu().numpy(),
-                        #                   approx_pseudo)
-                        # this does not get from raw features, why the pseudo inverse not identity matrices?
-                        # plot the distance measurement
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix = np.dot(block.detach().cpu().numpy(),
+                            #                   approx_pseudo)
+                            # this does not get from raw features, why the pseudo inverse not identity matrices?
+                            # plot the distance measurement
 
-                        # c_matrix = torch.from_numpy(c_matrix)
-                        #
-                        # # c_matrix = self_representation_ls(block.T)
-                        # # c_matrix = block @ (
-                        # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                        # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                        # _, c_u = torch.linalg.eigh(
-                        #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                        # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                        # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
-                        # --TODO here:
-                        G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
-                        diagIndices = np.diag_indices(G.shape[0])
+                            # c_matrix = torch.from_numpy(c_matrix)
+                            #
+                            # # c_matrix = self_representation_ls(block.T)
+                            # # c_matrix = block @ (
+                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
+                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
+                            # _, c_u = torch.linalg.eigh(
+                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            # --TODO here:
+                            G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
+                            diagIndices = np.diag_indices(G.shape[0])
 
-                        P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
-
-
-                        P = np.array(P)
-                        B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
-                        B[diagIndices] = 0
-
-                        c_matrix = B
-                        B = B.T @ W.detach().cpu().numpy()
-                        frobi= np.linalg.norm(B, "fro")
-                        block_reconstructed = torch.from_numpy(B).to(device) @ block
-                        approx_err = torch.mean((block - block_reconstructed) ** 2).item()
-                        approx_err_list.append(approx_err)
-
-                        try:
-                            l2_norm_b = np.linalg.norm(B, 2)
-                            soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                            # print("soft_rank_global", soft_rank_global)
-                            gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
-                        except Exception as e:
-                            print("trying to calculate soft rank ")
-                            print(e)
-                            try:
-                                print("add to check numerical instability")
-                                l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                # print("soft_rank_global", soft_rank_global)
-                                gamma_estimated = args.beta * soft_rank_global / 4
-                            except Exception as e:
-                                print(e)
-                            gamma_estimated = gamma_previous
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
 
 
-                        # gamma_estimated = 3 * 1 / (torch.trace(
-                        #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                        gamma_estimated_list.append(gamma_estimated)
+                            P = np.array(P)
+                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+                            B[diagIndices] = 0
+
+                            c_matrix = B
+                            B = B.T @ W.detach().cpu().numpy()
+                            c_matrix_np = B
+                            # frobi= np.linalg.norm(B, "fro")
+                            # block_reconstructed = torch.from_numpy(B).to(device) @ block
+                            # approx_err = torch.mean((block - block_reconstructed) ** 2).item()
+                            # approx_err_list.append(approx_err)
+                            #
+                            # try:
+                            #     l2_norm_b = np.linalg.norm(B, 2)
+                            #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                            #     # print("soft_rank_global", soft_rank_global)
+                            #     gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
+                            # except Exception as e:
+                            #     print("trying to calculate soft rank ")
+                            #     print(e)
+                            #     try:
+                            #         print("add to check numerical instability")
+                            #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                            #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                            #         # print("soft_rank_global", soft_rank_global)
+                            #         gamma_estimated = args.beta * soft_rank_global / 4
+                            #     except Exception as e:
+                            #         print(e)
+                            #     gamma_estimated = gamma_previous
+
+                            ############## back to l1 norm: #############
+
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                            #                      approx_pseudo)
+                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
+                                                              axis=1).sum() / args.bs/args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("current estimated gamma: ", gamma_estimated)
+
+                            # gamma_estimated = 3 * 1 / (torch.trace(
+                            #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            gamma_estimated_list.append(gamma_estimated)
 
 
 
@@ -524,6 +534,7 @@ for seed in args.seeds:
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                          'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),

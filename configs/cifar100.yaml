@@ -13,3 +13,4 @@ data_dir: ./data/datasets/cifar100_clip_60000.pt
 data_dir_val: ./data/datasets/cifar100_clip_60000.pt
 warmup: 2
 save_every: 25
+input_dim: 768

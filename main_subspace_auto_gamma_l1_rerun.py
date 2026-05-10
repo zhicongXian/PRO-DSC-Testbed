@@ -1,6 +1,7 @@
 import os
 import sys
 sys.path.append('./')
+import jax.numpy as jnp
 
 from datetime import datetime
 current_date = datetime.now()
@@ -163,7 +164,9 @@ scaler = GradScaler()
 total_wamup_steps = args.warmup
 warmup_step = 0
 result_df = pd.DataFrame()
-
+gamma_estimated_list = []
+gamma = None
+gamma_previous = None
 for seed in args.seeds:
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
@@ -171,6 +174,20 @@ for seed in args.seeds:
             model.train()
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
+            if len(gamma_estimated_list) >0:
+                gamma = np.mean(np.array(gamma_estimated_list))
+                gamma_estimated_list = []
+
+                if gamma_previous is None:
+                    gamma_previous = gamma
+                elif gamma_previous > gamma:
+                    gamma = gamma_previous
+                else:
+                    gamma_previous = gamma
+
+                gamma_estimated_list = []
+
+                print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -197,21 +214,94 @@ for seed in args.seeds:
                         _, U = torch.linalg.eigh(L)
                         U_hat = U[:, :args.n_clusters]
                         W = U_hat @ U_hat.T
+                    if epoch > warmup_step:
+                        with torch.no_grad():
+                            block = z.detach().clone().double()
 
-                    if warmup_step <= total_wamup_steps:
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix = np.dot(block.detach().cpu().numpy(),
+                            #                   approx_pseudo)
+                            # this does not get from raw features, why the pseudo inverse not identity matrices?
+                            # plot the distance measurement
+
+                            # c_matrix = torch.from_numpy(c_matrix)
+                            #
+                            # # c_matrix = self_representation_ls(block.T)
+                            # # c_matrix = block @ (
+                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
+                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
+                            # _, c_u = torch.linalg.eigh(
+                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
+                            # --TODO here:
+                            G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
+                            diagIndices = np.diag_indices(G.shape[0])
+
+                            P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
+
+
+                            P = np.array(P)
+                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+                            B[diagIndices] = 0
+
+                            c_matrix = B
+                            B = B.T @ W.detach().cpu().numpy()
+                            c_matrix_np = B
+                            # frobi= np.linalg.norm(B, "fro")
+                            # block_reconstructed = torch.from_numpy(B).to(device) @ block
+                            # approx_err = torch.mean((block - block_reconstructed) ** 2).item()
+                            # approx_err_list.append(approx_err)
+                            #
+                            # try:
+                            #     l2_norm_b = np.linalg.norm(B, 2)
+                            #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                            #     # print("soft_rank_global", soft_rank_global)
+                            #     gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
+                            # except Exception as e:
+                            #     print("trying to calculate soft rank ")
+                            #     print(e)
+                            #     try:
+                            #         print("add to check numerical instability")
+                            #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                            #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                            #         # print("soft_rank_global", soft_rank_global)
+                            #         gamma_estimated = args.beta * soft_rank_global / 4
+                            #     except Exception as e:
+                            #         print(e)
+                            #     gamma_estimated = gamma_previous
+
+                            ############## back to l1 norm: #############
+
+                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                            #                      approx_pseudo)
+                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
+                                                              axis=1).sum() / args.bs/args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("current estimated gamma: ", gamma_estimated)
+
+                            # gamma_estimated = 3 * 1 / (torch.trace(
+                            #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            gamma_estimated_list.append(gamma_estimated)
+                    if epoch <= total_wamup_steps:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
                         loss_tcr = warmup_criterion(z) # logdet() loss
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(self_coeff) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
-                        loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                        if epoch >= total_wamup_epochs + 2:
+
+                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
+
+                        else:
+                            loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
 
-                if warmup_step <= total_wamup_steps:
+                if epoch <= total_wamup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -224,11 +314,11 @@ for seed in args.seeds:
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if warmup_step == total_wamup_steps:
+                if epoch == total_wamup_steps:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if warmup_step <= total_wamup_steps:
+                if epoch <= total_wamup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
@@ -289,6 +379,7 @@ for seed in args.seeds:
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                          'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),

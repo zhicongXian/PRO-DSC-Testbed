@@ -107,6 +107,31 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
     return acc_lst, nmi_lst, pred_lst # fd_error, nnz
 
 
+def self_representation_loss(labels_true, representation_matrix):
+    """Evaluation of self-representation error for self-expressive subspace clustering methods
+    Parameters
+    ----------
+    labels_true : int array, shape = [n_samples]
+    	A clustering of the data into disjoint subsets.
+    representation_matrix : array, shape = [n_samples, n_samples]
+    	Each row is a representation vector
+
+    Returns
+    -------
+    loss : float
+       return self_representation_loss in the range of [0, 1]
+    """
+    n_samples = labels_true.shape[0]
+    loss = 0.0
+    for i in range(n_samples):
+        representation_vec = np.abs(representation_matrix[i, :])
+        label = labels_true[i]
+        loss += np.sum(representation_vec[labels_true != label]) / np.sum(representation_vec)
+
+    return loss / n_samples
+
+
+
 def spectral_clustering_metrics_with_ari(A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
                                 extra_dim=0, tol=0, seed = 10):
     """ n_init is number of separate runs of kmeans to average over
@@ -160,3 +185,60 @@ def spectral_clustering_metrics_with_ari(A, nclass, label, verbose=True, n_init=
     #     acc_lst = [0]
 
     return acc_lst, nmi_lst, pred_lst, ari_lst   # fd_error, nnz
+
+def spectral_clustering_metrics_with_ari_and_subspace_discovery_error(A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
+                                extra_dim=0, tol=0, seed = 10):
+    """ n_init is number of separate runs of kmeans to average over
+    computes average accuracy and nmi
+    """
+    lap = scipy.sparse.csgraph.laplacian(A, normed=True)
+    # nnz, fd_error, components, wrong_edge = basic_metrics(A, label, verbose=False)
+    # if components > nclass:
+    #     print('---Oversegmented graph, setting higher eigensolver tolerance (unstable results)---')
+    #     # oversegmented, need higher tolerance
+    #     tol = 1e-4
+
+    if solver_type == 'shift_invert':
+        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass + extra_dim, sigma=1e-6, which='LM', tol=tol)
+    elif solver_type == 'la':
+        vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass + extra_dim,
+                                                    sigma=None, which='LA', tol=tol)
+    elif solver_type == 'lm':
+        k = nclass + extra_dim
+
+        vals, embedding = scipy.sparse.linalg.eigsh(
+            2 * scipy.sparse.identity(lap.shape[0]) - lap, ncv=max(2 * k + 1, 50),
+            k=nclass + extra_dim, sigma=None, which='LM', tol=tol)
+    else:
+        raise ValueError('invalid solver')
+
+    if normalize_embed:
+        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init, random_state=seed)
+    acc_lst = []
+    nmi_lst = []
+    pred_lst = []
+    ari_lst = []
+    sde_lst = []
+    for _ in range(n_init):
+        cluster_model.fit(embedding)
+        pred_label = cluster_model.labels_
+        acc = clustering_accuracy(label, pred_label)
+        nmi_score = nmi(label, pred_label)
+        ari = adjusted_rand_score(label, pred_label)
+        acc_lst.append(acc)
+        nmi_lst.append(nmi_score)
+        pred_lst.append(pred_label)
+        ari_lst.append(ari)
+        subspace_discovery_error = self_representation_loss(label, A)
+        sde_lst.append(subspace_discovery_error)
+
+    # conn_lst = connectivity_lst(A, label)
+
+    if verbose:
+        print(f'Acc mean: {np.mean(acc_lst):.3f}   ||| stdev: {np.std(acc_lst):.4f}')
+    # if components > nclass:
+    #     # do not record unstable results for oversegmented case
+    #     acc_lst = [0]
+
+    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst   # fd_error, nnz

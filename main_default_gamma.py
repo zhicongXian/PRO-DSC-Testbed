@@ -19,7 +19,8 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari, \
+    spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -71,6 +72,23 @@ parser.add_argument('--validate_every', type=int, default=25,
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 
+# parser.add_argument('--seeds', type=int, default=[42],
+#                     help='random seed')
+
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 args = parser.parse_args()
 
 datasets_list = ['cifar10','cifar100','cifar10-mcr','cifar20','tinyimagenet','imagenet','imagenetdogs']
@@ -249,24 +267,25 @@ for seed in args.seeds:
                     self_coeff = (logits @ logits.T).abs()
 
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np)
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np, seed=seed)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
-                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
                     print(
-                        'Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
-                            np.mean(acc_lst), np.max(acc_lst),
-                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
-                          'ari': np.mean(ari_lst)
+                          'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst)
                           }])])
 
                     result_df.to_csv(
