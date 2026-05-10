@@ -214,7 +214,7 @@ for seed in args.seeds:
                         _, U = torch.linalg.eigh(L)
                         U_hat = U[:, :args.n_clusters]
                         W = U_hat @ U_hat.T
-                    if epoch > warmup_step:
+                    if epoch >= total_wamup_steps:
                         with torch.no_grad():
                             block = z.detach().clone().double()
 
