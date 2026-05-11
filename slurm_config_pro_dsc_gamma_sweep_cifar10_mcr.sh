@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_default.py --data=cifar10-mcr --experiment_name=wandb_sweep_cifar10_mcr_seed1 --seed=1 --epo=5000 >> cifa10_out.txt
+python3 ./main_gamma_sweep.py --data=cifar10-mcr --experiment_name=wandb_sweep_cifar10_mcr_seed1 --seed=1 --epo=5000 >> cifa10_out.txt
 
