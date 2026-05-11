@@ -379,19 +379,19 @@ for seed in args.seeds:
                             # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
                             # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
                             # --TODO here:
-                            G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
-                            diagIndices = np.diag_indices(G.shape[0])
-
-                            P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
-
-
-                            P = np.array(P)
-                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
-                            B[diagIndices] = 0
-
-                            c_matrix = B
-                            B = B.T @ W.detach().cpu().numpy()
-                            c_matrix_np = B
+                            # G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
+                            # diagIndices = np.diag_indices(G.shape[0])
+                            #
+                            # P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
+                            #
+                            #
+                            # P = np.array(P)
+                            # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+                            # B[diagIndices] = 0
+                            #
+                            # c_matrix = B
+                            # B = B.T @ W.detach().cpu().numpy()
+                            # c_matrix_np = B
                             # frobi= np.linalg.norm(B, "fro")
                             # block_reconstructed = torch.from_numpy(B).to(device) @ block
                             # approx_err = torch.mean((block - block_reconstructed) ** 2).item()
@@ -417,11 +417,11 @@ for seed in args.seeds:
 
                             ############## back to l1 norm: #############
 
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix_np = np.dot(block.detach().cpu().numpy(),
-                            #                      approx_pseudo)
+                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                                                 approx_pseudo)
                             gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
-                                                              axis=1).sum() / args.bs/args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                                                              axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("current estimated gamma: ", gamma_estimated)
 
                             # gamma_estimated = 3 * 1 / (torch.trace(
