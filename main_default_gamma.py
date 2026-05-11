@@ -1,6 +1,7 @@
 import os
 import sys
 sys.path.append('./')
+import time
 
 from datetime import datetime
 current_date = datetime.now()
@@ -22,6 +23,7 @@ from utils import *
 from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari, \
     spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
+import pickle
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -71,7 +73,8 @@ parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-
+parser.add_argument('--input_dim', type=int, default=768,
+                    help='pro dsc input dim')
 # parser.add_argument('--seeds', type=int, default=[42],
 #                     help='random seed')
 
@@ -91,7 +94,7 @@ parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a l
 # Use like:
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr','cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar10-mcr','cifar20','tinyimagenet','imagenet','imagenetdogs','mnist']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
@@ -107,8 +110,7 @@ dir_name = os.path.join(f'exps/{args.desc}')
 writer = init_pipeline(dir_name, args)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = PRO_DSC(input_dim=args.input_dim, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
-sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+
 
 # Loading features and labels
 if args.data.lower() in ['cifar10','cifar100','cifar20']:
@@ -134,6 +136,25 @@ elif args.data.lower() == "cifar10-mcr":
             full_labels = np.load(f)
             clip_labels = full_labels[:50000]
             clip_labels_test = full_labels[-10000:]
+elif args.data.lower() == 'mnist':
+    # downsample = 1280
+    previous_path = './data/datasets'#'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
+    with open(previous_path+'/{}/{}_scattering_train_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_train_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_labels = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_labels = pickle.load(f)
+    full_samples = np.concatenate([train_samples, test_samples], axis=0)#[:downsample] #[nb_samples,1, 217, 4,4]
+    full_labels = np.concatenate([train_labels, test_labels], axis=0)#[:downsample]
+    full_samples = np.reshape(full_samples, (len(full_samples), -1))
+    args.input_dim = full_samples.shape[-1]
+    clip_features = clip_features_test = full_samples
+    clip_labels = clip_labels_test = full_labels
+   # y in [0, 1, ..., K-1]
+
 else:
     feature_dict = torch.load(args.data_dir)
     clip_features = feature_dict['features']
@@ -148,6 +169,10 @@ clip_feature_set = FeatureDataset(clip_features, clip_labels)
 train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
 test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False)
+
+############# construct model #############
+model = PRO_DSC(input_dim=args.input_dim, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
+sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 
 #### loss of logdet()
 warmup_criterion = TotalCodingRate(eps=args.eps)
@@ -166,6 +191,7 @@ result_df = pd.DataFrame()
 for seed in args.seeds:
     same_seeds(seed)
     with tqdm(total=args.epo) as progress_bar:
+        t_begin = time.time()
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
@@ -250,6 +276,7 @@ for seed in args.seeds:
 
             ### evaluate on test set
             if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+                t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -285,7 +312,8 @@ for seed in args.seeds:
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'time': t_end - t_begin
                           }])])
 
                     result_df.to_csv(

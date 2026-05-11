@@ -192,7 +192,7 @@ def train(config):
     total_wamup_steps = config['warmup']
     warmup_step = 0
     print("before training configs:", config)
-
+    result_df = pd.DataFrame()
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):

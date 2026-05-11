@@ -54,6 +54,8 @@ from lambda_utils import *
 from utils import *
 from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
+import pickle
+import time
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -128,7 +130,7 @@ parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a l
 # Use like:
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 import torch
@@ -213,7 +215,24 @@ elif args.data.lower() == "cifar10-mcr":
             clip_labels = full_labels[:50000]
             clip_labels_test = full_labels[-10000:]
         train_ids = np.arange(len(clip_labels))
-
+elif args.data.lower() == 'mnist':
+    # downsample = 1280
+    previous_path = './data/datasets'#'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
+    with open(previous_path+'/{}/{}_scattering_train_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_train_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_labels = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_labels = pickle.load(f)
+    full_samples = np.concatenate([train_samples, test_samples], axis=0)#[:downsample] #[nb_samples,1, 217, 4,4]
+    full_labels = np.concatenate([train_labels, test_labels], axis=0)#[:downsample]
+    full_samples = np.reshape(full_samples, (len(full_samples), -1))
+    args.input_dim = full_samples.shape[-1]
+    clip_features = clip_features_test = full_samples
+    clip_labels = clip_labels_test = full_labels
+   # y in [0, 1, ..., K-1]
 else:
     feature_dict = torch.load(args.data_dir)
     clip_features = feature_dict['features']
@@ -261,6 +280,7 @@ for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
     with tqdm(total=args.epo) as progress_bar:
+        t_begin = time.time()
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
@@ -368,71 +388,71 @@ for seed in args.seeds:
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                         # # here you can add your initial estimates for Z and for C. and subsequently update!
                         if epoch> total_wamup_steps: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                            with torch.no_grad():
+                                block = z.detach().clone().double()
 
-                            block = z.detach().clone().double()
+                                G =  block @ block.T
+                                diagIndices = np.diag_indices(G.shape[0])
 
-                            G =  block @ block.T
-                            diagIndices = np.diag_indices(G.shape[0])
+                                P = jnp.linalg.inv(G.detach().cpu().numpy())
+                                # without excluding the diagonal elements:
 
-                            P = jnp.linalg.inv(G.detach().cpu().numpy())
-                            # without excluding the diagonal elements:
+                                ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+                                # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                                # c_matrix = np.dot(block.detach().cpu().numpy(),
+                                #                         approx_pseudo)
+                                # c_matrix = torch.from_numpy(c_matrix)
+                                # even older, no fast implementation
+                                # c_matrix = self_representation_ls(block.T)
+                                # c_matrix = block @ (
+                                #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
+                                #
 
-                            ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                         approx_pseudo)
-                            # c_matrix = torch.from_numpy(c_matrix)
-                            # even older, no fast implementation
-                            # c_matrix = self_representation_ls(block.T)
-                            # c_matrix = block @ (
-                            #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            #
+                                #### start to compute the regularizer given the pseudo inverse c_matrix:
 
-                            #### start to compute the regularizer given the pseudo inverse c_matrix:
+                                # conver to laplacian matrix:
+                                # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
+                                # L_c = torch.diag(A.sum(1)) - A
+                                # _, c_u = torch.linalg.eigh(
+                                #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
+                                # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
+                                # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
 
-                            # conver to laplacian matrix:
-                            # A = 0.5 * (c_matrix.abs() + c_matrix.abs().T)
-                            # L_c = torch.diag(A.sum(1)) - A
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
-
-                            # gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # this constant factor turns out to be changing, so drop the idea
-                            # gamma_estimated = 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # the l1 norm like from SSC also does not work
+                                # gamma_estimated =constant_factor* 1/ (torch.trace(L_c.T @ c_W)/args.bs + 1e-7) # this constant factor turns out to be changing, so drop the idea
+                                # gamma_estimated = 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # the l1 norm like from SSC also does not work
 
 
-                            #######################################
+                                #######################################
 
-                            P = np.array(P)
-                            B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
-                            B[diagIndices] = 0
-                            B = B.T @ W.detach().cpu().numpy()
-                             # this is especially psueo inverse leads to identity matrices
+                                P = np.array(P)
+                                B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
+                                B[diagIndices] = 0
+                                B = B.T @ W.detach().cpu().numpy()
+                                 # this is especially psueo inverse leads to identity matrices
 
-                            frobi= np.linalg.norm(B, "fro")
+                                frobi= np.linalg.norm(B, "fro")
 
-                            try:
-                                l2_norm_b = np.linalg.norm(B, 2)
-                                soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                                print("soft_rank_global", soft_rank_global)
-                                gamma_estimated = args.beta * soft_rank_global/4
-                            # to catch the SVD does not converge error:
-                            except Exception as e:
-                                print(e)
-                                try: #  retrial for SVD computation
-                                    print("add to check numerical instability")
-                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                try:
+                                    l2_norm_b = np.linalg.norm(B, 2)
+                                    soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
                                     print("soft_rank_global", soft_rank_global)
                                     gamma_estimated = args.beta * soft_rank_global/4
+                                # to catch the SVD does not converge error:
                                 except Exception as e:
                                     print(e)
-                                gamma_estimated = gamma_previous
+                                    try: #  retrial for SVD computation
+                                        print("add to check numerical instability")
+                                        l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                        print("soft_rank_global", soft_rank_global)
+                                        gamma_estimated = args.beta * soft_rank_global/4
+                                    except Exception as e:
+                                        print(e)
+                                    gamma_estimated = gamma_previous
 
 
-                            gamma_estimated_list.append(gamma_estimated)
-                            print("estimated gamma: ",gamma_estimated)
+                                gamma_estimated_list.append(gamma_estimated)
+                                print("estimated gamma: ",gamma_estimated)
 
                         if epoch >= total_wamup_steps+2:
                             M = L.T @ W
@@ -492,6 +512,7 @@ for seed in args.seeds:
 
             ### evaluate on test set
             if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+                t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -531,7 +552,8 @@ for seed in args.seeds:
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'time': t_end-t_begin
                           }])])
 
                     result_df.to_csv(

@@ -23,6 +23,7 @@ from loss.loss_fn import TotalCodingRate
 from utils import *
 from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import pandas as pd
+import pickle
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -79,12 +80,12 @@ parser.add_argument('--gamma_list', type=int, default=[100,120],
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
 
-parser.add_argument('--input_dim', type=int, default=128,
-                    help='list of coeff for expr loss')
+parser.add_argument('--input_dim', type=int, default=768,
+                    help='pro dsc input dim')
 
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
@@ -131,6 +132,29 @@ def load_dataset(config):
                 clip_labels = full_labels[:50000]
                 clip_labels_test = full_labels[-10000:]
             train_ids = np.arange(len(clip_labels))
+    elif config['data'].lower() == 'mnist':
+        # downsample = 1280
+        # previous_path = 'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
+        previous_path = './data/datasets'  # 'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
+        with open(previous_path + '/{}/{}_scattering_train_data.pkl'.format( config['data'].upper(),  config['data'].upper()),
+                  'rb') as f:
+            train_samples = pickle.load(f)
+        with open(previous_path + '/{}/{}_scattering_train_label.pkl'.format( config['data'].upper(),  config['data'].upper()),
+                  'rb') as f:
+            train_labels = pickle.load(f)
+        with open(previous_path + '/{}/{}_scattering_test_data.pkl'.format( config['data'].upper(),  config['data'].upper()),
+                  'rb') as f:
+            test_samples = pickle.load(f)
+        with open(previous_path + '/{}/{}_scattering_test_label.pkl'.format( config['data'].upper(),  config['data'].upper()),
+                  'rb') as f:
+            test_labels = pickle.load(f)
+        full_samples = np.concatenate([train_samples, test_samples], axis=0)  # [:downsample] #[nb_samples,1, 217, 4,4]
+        full_labels = np.concatenate([train_labels, test_labels], axis=0)  # [:downsample]
+        full_samples = np.reshape(full_samples, (len(full_samples), -1))
+        args.input_dim = full_samples.shape[-1]
+        clip_features = clip_features_test = full_samples
+        clip_labels = clip_labels_test = full_labels
+    # y in [0, 1, ..., K-1]
 
     else:
         feature_dict = torch.load(config['data_dir'])
