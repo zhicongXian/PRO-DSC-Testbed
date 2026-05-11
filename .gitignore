@@ -42,3 +42,7 @@ orl_default.txt
 orl_default_out.txt
 gamma_sweep_orl.txt
 gamma_sweep_orl_out.txt
+cifar10_mcr_default.txt
+cifar10_mcr_default_out.txt
+cifar10_mcr_auto_gamma.txt
+cifar10_mcr_auto_gamma_out.txt
