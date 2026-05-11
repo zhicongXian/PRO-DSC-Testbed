@@ -232,6 +232,7 @@ elif args.data.lower() == 'mnist':
     args.input_dim = full_samples.shape[-1]
     clip_features = clip_features_test = full_samples
     clip_labels = clip_labels_test = full_labels
+    train_ids = np.arange(len(clip_labels))
    # y in [0, 1, ..., K-1]
 else:
     feature_dict = torch.load(args.data_dir)
