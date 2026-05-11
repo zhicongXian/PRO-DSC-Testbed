@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_auto_gamma.py --data=orl --experiment_name=orl_auto_gamma --load_pretrain  >> orl_auto_out.txt
+python3 ./main_subspace_auto_gamma.py --data=orl --experiment_name=orl_auto_gamma_round2 --load_pretrain  >> orl_auto_out.txt
 
