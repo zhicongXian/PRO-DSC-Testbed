@@ -400,7 +400,7 @@ for seed in args.seeds:
                                 l2_norm_b = np.linalg.norm(B, 2)
                                 soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
                                 # print("soft_rank_global", soft_rank_global)
-                                gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
+                                gamma_estimated = args.beta *  soft_rank_global   # 1 / lambda_hat
                             except Exception as e:
                                 print("trying to calculate soft rank ")
                                 print(e)
@@ -409,7 +409,7 @@ for seed in args.seeds:
                                     l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
                                     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                     # print("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = args.beta * soft_rank_global / 4
+                                    gamma_estimated = args.beta * soft_rank_global
                                 except Exception as e:
                                     print(e)
                                 gamma_estimated = gamma_previous
