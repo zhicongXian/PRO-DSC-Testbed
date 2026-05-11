@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=DefaultCoil100
-#SBATCH --output=coil100_default.txt
+#SBATCH --job-name=DefaultORL
+#SBATCH --output=orl_default.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_default_gamma.py --data=coil100 --experiment_name=coil100_default >> coil100_default_out.txt
+python3 ./main_subspace_default_gamma.py --data=orl --experiment_name=orl_default >> orl_default_out.txt
 

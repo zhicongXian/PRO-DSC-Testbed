@@ -36,3 +36,7 @@ default_subspace_coil.txt
 default_subspace_coil_out.txt
 l1_norm_coil100_pretrain_knn.txt
 l1_norm_coil100_pretrain_knn_out.txt
+coil100_default.txt
+coil100_default_out.txt
+orl_default.txt
+orl_default_out.txt
