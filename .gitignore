@@ -46,3 +46,7 @@ cifar10_mcr_default.txt
 cifar10_mcr_default_out.txt
 cifar10_mcr_auto_gamma.txt
 cifar10_mcr_auto_gamma_out.txt
+mnist_gamma_sweep.txt
+mnist_gamma_sweep_out.txt
+mnist_auto_gamma.txt
+mnist_auto_gamma_out.txt
