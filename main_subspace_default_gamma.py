@@ -23,6 +23,7 @@ from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace
 import scipy.io as sio
 import pandas as pd
 import time
+import pickle
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
                     help='description of the experiment')
@@ -86,7 +87,7 @@ parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a l
 
 args = parser.parse_args()
 
-datasets_list = ['eyaleb','coil100','orl']
+datasets_list = ['eyaleb','coil100','orl','mnist']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
@@ -141,6 +142,24 @@ elif args.data.lower() == 'coil100':
     num_sample = x.shape[0]
     temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'),strict=False)
 
+elif args.data.lower() == 'mnist':
+    downsample = 400
+    previous_path = '/d/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
+    with open(previous_path+'/{}/{}_scattering_train_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_train_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        train_labels = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_data.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_samples = pickle.load(f)
+    with open(previous_path+'/{}/{}_scattering_test_label.pkl'.format(args.data.upper(), args.data.upper()), 'rb') as f:
+        test_labels = pickle.load(f)
+    full_samples = np.concatenate([train_samples, test_samples], axis=0)[:downsample]
+    full_labels = np.concatenate([train_labels, test_labels], axis=0)[:downsample]
+    x = full_samples
+    y = full_labels
+    y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+    num_sample = 2000 #x.shape[0]
+    # temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'),strict=False)
 
 #### construct dataloader for batch training  
 args.bs = num_sample
