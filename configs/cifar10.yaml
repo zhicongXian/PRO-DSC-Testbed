@@ -15,3 +15,4 @@ warmup: 1
 save_every: 10
 experiment_name: cifar10_knn_cnt_test
 input_dim: 768
+seeds: [1,2,3,4,5,6,7,8,9]
