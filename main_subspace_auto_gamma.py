@@ -29,7 +29,7 @@ from model.DSCNet import PRO_DSC
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import math as math
-
+import time
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -132,7 +132,7 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if key == "seeds":
+        if key == "seeds" or key=="epo":
             continue
         setattr(args, key, value)
 args.desc = '_'.join(
@@ -303,6 +303,7 @@ for seed in args.seeds:
     ae_z = []
     ys = []
     with tqdm(total=args.epo) as progress_bar:
+        t_begin = time.time()
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(args.epo))
             model.train()
@@ -362,24 +363,9 @@ for seed in args.seeds:
                         with torch.no_grad():
                             block = z.detach().clone().double()
 
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                   approx_pseudo)
-                            # this does not get from raw features, why the pseudo inverse not identity matrices?
-                            # plot the distance measurement
 
-                            # c_matrix = torch.from_numpy(c_matrix)
-                            #
-                            # # c_matrix = self_representation_ls(block.T)
-                            # # c_matrix = block @ (
-                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
                             # --TODO here:
-                            G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
+                            G = block @ block.T # B of shape: [bs, ft_sz]
                             diagIndices = np.diag_indices(G.shape[0])
 
                             P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
@@ -414,11 +400,7 @@ for seed in args.seeds:
                                     print(e)
                                 gamma_estimated = gamma_previous
 
-
-                            # gamma_estimated = 3 * 1 / (torch.trace(
-                            #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             gamma_estimated_list.append(gamma_estimated)
-
 
 
 
@@ -480,9 +462,12 @@ for seed in args.seeds:
             if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
+
+
             ### evaluate on test set
             if epoch >= total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
                 print('EVAL on VALIDATE DATASETS')
+                t_end = time.time()
                 model.eval()
                 with torch.no_grad():
                     logits_list = []
@@ -523,63 +508,17 @@ for seed in args.seeds:
                             np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
                             np.max(sde_lst), epoch))
 
+                    duration = t_end - t_begin
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
                           'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'time': duration
                           }])])
 
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
                             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
-
-                    # if previous_nmi is None:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     if not os.path.exists(args.out_dir):
-                    #         os.makedirs(args.out_dir)
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # elif np.mean(nmi_lst) > previous_nmi:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # else:
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
