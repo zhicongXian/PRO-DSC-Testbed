@@ -22,7 +22,7 @@ from utils import *
 from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import scipy.io as sio
 import pandas as pd
-
+import time
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
                     help='description of the experiment')
@@ -166,6 +166,7 @@ result_df = pd.DataFrame()
 
 for seed in args.seeds:
     with tqdm(total=args.epo) as progress_bar:
+        t_begin = time.time()
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
@@ -250,6 +251,7 @@ for seed in args.seeds:
 
             ### evaluate on test set
             if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
+                t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -292,7 +294,8 @@ for seed in args.seeds:
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'time': t_end - t_begin
                           }])])
 
                     result_df.to_csv(
