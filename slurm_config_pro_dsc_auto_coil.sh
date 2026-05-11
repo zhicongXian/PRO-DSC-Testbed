@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_auto_gamma_l1_rerun.py --data=coil100 --experiment_name=coil100_auto_gamma_seed42_with_l1norm --seeds=[42]   >> coil100_pretrain_knn_out.txt
+python3 ./main_subspace_auto_gamma.py --data=coil100 --load_pretrain --experiment_name=coil100_auto_gamma_seed42_round2 --seeds=[42]   >> coil100_pretrain_knn_out.txt
 
