@@ -60,3 +60,5 @@ cifar100_auto_gamma.txt
 cifar100_auto_gamma_out.txt
 cifa100_gamma_sweep.txt
 cifa100_gamma_sweep_out.txt
+cifa10_gamma_sweep.txt
+cifa10_gamma_sweep_out.txt
