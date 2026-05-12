@@ -54,3 +54,9 @@ cifar10_auto_gamma.txt
 cifar10_auto_gamma_out.txt
 cifar10_default.txt
 cifar10_default_out.txt
+cifar100_default.txt
+cifar100_default_out.txt
+cifar100_auto_gamma.txt
+cifar100_auto_gamma_out.txt
+cifa100_gamma_sweep.txt
+cifa100_gamma_sweep_out.txt
