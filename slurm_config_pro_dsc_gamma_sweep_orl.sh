@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_sweep.py --data=orl --experiment_name=wandb_sweep_orl --seed=2 >> gamma_sweep_orl_out.txt
+python3 ./main_subspace_gamma_sweep.py --data=orl --experiment_name=wandb_sweep_orl_seed1 --seed=1 >> gamma_sweep_orl_out.txt
 
