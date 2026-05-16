@@ -420,6 +420,8 @@ for seed in args.seeds:
                             approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
                             c_matrix_np = np.dot(block.detach().cpu().numpy(),
                                                  approx_pseudo)
+                            diagIndices = np.diag_indices(c_matrix_np.shape[0])
+                            c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
                             gamma_estimated = (np.linalg.norm(c_matrix_np, 1,

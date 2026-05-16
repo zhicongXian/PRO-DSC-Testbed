@@ -15,7 +15,9 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.model import PRO_DSC, PRO_DSC_Image, DSCNet
+# from model.model import PRO_DSC, PRO_DSC_Image, DSCNet
+from model.DSCNet import PRO_DSC
+from model.model import DSCNet, PRO_DSC_Image
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
@@ -75,9 +77,10 @@ parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true'
 parser.add_argument('--seeds', type=int, default=[1,2],
                     help='seeds')
 parser.add_argument('--out_dir', type=str, default="results")
+parser.add_argument('--output_file', type=str, default="results")
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','coil100']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['cifar10','cifar100','coil100','orl']#,'cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
@@ -87,7 +90,7 @@ if args.load_pretrain:
         for key, value in yaml_data.items():
             setattr(args, key, value)
 else:
-    with open(os.path.join('configs','{}_2.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+    with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
         yaml_data = yaml.safe_load(file)
         for key, value in yaml_data.items():
             setattr(args, key, value)
@@ -174,7 +177,23 @@ elif args.data.lower() == "coil100":
         sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 
 
-
+if args.data.lower() == 'orl':
+    # Loading features and labels
+    data = sio.loadmat(args.data_dir)
+    x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y'] # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+    y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+    # network and optimization parameters
+    num_sample = x.shape[0]
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
+        device)
+    sink_layer = SinkhornDistance(args.pieta, max_iter=1)
+    temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'),strict=False)
+    clip_features = x
+    clip_labels = y
+    clip_labels_test = y
+    clip_features_test = x
+    args.bs = num_sample
 else:
     feature_dict = torch.load(args.data_dir)
     clip_features = feature_dict['features']
@@ -197,15 +216,24 @@ warmup_criterion = TotalCodingRate(eps=args.eps)
 previous_nmi = None
 result_df = pd.DataFrame()
 
-if args.data.lower() == "coil100":
+if args.data.lower() == "coil100" or args.data.lower() == "orl":
     ### optimizer
-    param_list = [p for p in model.ae.parameters() if p.requires_grad] + [p for p in
+
+    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
                                                                                    model.subspace.parameters() if
                                                                                    p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
-    optimizer = optim.Adam(param_list, lr=args.lr)
-    # optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
+
+    ######### This was for coil ##############
+    # param_list = [p for p in model.ae.parameters() if p.requires_grad] + [p for p in
+    #                                                                                model.subspace.parameters() if
+    #                                                                                p.requires_grad]
+    # param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
+    # optimizer = optim.Adam(param_list, lr=args.lr)
+    ##########################################
+
+    optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=args.lr, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
@@ -227,7 +255,8 @@ if args.data.lower() == "coil100":
                     x, y = x.float().to(device), y.to(device)
                     y_np = y.detach().cpu().numpy()
                     with autocast(enabled=True):
-                        z, logits, x_recon = model(x)
+                        z, logits = model(x)
+                        pre_ft = model.pre_feature(x)
                         self_coeff = (logits @ logits.T)
                         Sign_self_coeff = torch.sign(self_coeff)
 
@@ -253,7 +282,7 @@ if args.data.lower() == "coil100":
                             loss = warmup_criterion(z)
                             loss_tcr = loss
                             loss_dict['loss_TCR'].append(loss_tcr.item())
-                            loss_ae = F.mse_loss(x_recon, x, reduction='mean')
+                            loss_ae = 0#F.mse_loss(x_recon, x, reduction='mean')
                             if epoch == 0:
                                 loss = 0.01*loss_tcr + loss_ae
                             else:
@@ -261,12 +290,13 @@ if args.data.lower() == "coil100":
 
                         else:
                             if epoch == total_wamup_epochs + 1:
-                                ae_z.append(z.detach().cpu().numpy())
+                                ae_z.append(pre_ft.detach().cpu().numpy())
                                 ys.append(y_np)
                             elif epoch == total_wamup_epochs+2:
                                 # start serializing files:
                                 images = np.concatenate(ae_z)
                                 labels = np.concatenate(ys)
+                                print("pretrain features shape: ", images.shape)
                                 with open(args.output_file, "wb") as f:
                                     pickle.dump({
                                         "images": images,
@@ -284,12 +314,12 @@ if args.data.lower() == "coil100":
                             loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                             loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                             loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-                            loss_ae = F.mse_loss(x_recon, x, reduction='mean')
+                            loss_ae =0# F.mse_loss(x_recon, x, reduction='mean')
 
                             loss_dict['loss_TCR'].append(loss_tcr.item())
                             loss_dict['loss_Exp'].append(loss_exp.item())
                             loss_dict['loss_Block'].append(loss_bl.item())
-                            loss_dict['loss_ae'].append(loss_ae.item())
+                            # loss_dict['loss_ae'].append(loss_ae.item())
 
                     if epoch <= total_wamup_epochs:
                         optimizer.zero_grad()
@@ -298,8 +328,8 @@ if args.data.lower() == "coil100":
                         scaler.update()
                     elif epoch == total_wamup_epochs+1:
                         # freeze the autoencoder weights:
-                        for p in model.ae.parameters():
-                            p.requires_grad = False
+                        # for p in model.ae.parameters():
+                        #     p.requires_grad = False
                         # and then perform backprop:
                         optimizer.zero_grad()
                         scaler.scale(loss).backward()
@@ -319,13 +349,13 @@ if args.data.lower() == "coil100":
                         model = update_pi_from_z(model)
 
                     if epoch <= total_wamup_epochs:
-                        progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss_tcr.item()), ae_loss ="{:5.4f}".format(loss_ae.item()) )
+                        progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss_tcr.item())) # , ae_loss ="{:5.4f}".format(loss_ae.item()) )
                     else:
                         progress_bar.set_postfix(
                             tcr_loss="{:5.4f}".format(loss_tcr.item()),
                             exp_loss="{:5.4f}".format(loss_exp.item()),
                             block_loss="{:5.4f}".format(loss_bl.item()),
-                            ae_loss="{:5.4f}".format(loss_ae.item())
+                            # ae_loss="{:5.4f}".format(loss_ae.item())
                         )
                     warmup_step += 1
                 progress_bar.update(1)
