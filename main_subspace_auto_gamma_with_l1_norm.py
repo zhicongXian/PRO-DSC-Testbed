@@ -287,34 +287,75 @@ approx_err_previous = 1
 
 for seed in args.seeds:
     same_seeds(seed)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
+        device)
+    sink_layer = SinkhornDistance(args.pieta, max_iter=1)
 
-    ### optimizer
+    if args.data.lower() == 'orl':
+        # Loading features and labels
+        data = sio.loadmat(args.data_dir)
+        x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y']  # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        # network and optimization parameters
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'), strict=False)
+
+    elif args.data.lower() == 'eyaleb':
+        data = sio.loadmat(args.data_dir)
+        img = data['Y']
+        I = []
+        Label = []
+        for i in range(img.shape[2]):
+            for j in range(img.shape[1]):
+                temp = np.reshape(img[:, j, i], [42, 48])
+                Label.append(i)
+                I.append(temp)
+        I = np.array(I)
+        y = np.array(Label[:])
+        Img = np.transpose(I, [0, 2, 1])
+        x = np.expand_dims(Img[:], 1).astype(float)
+        y = y - y.min()
+
+        num_class = 38
+        num_sample = num_class * 64
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/yaleb.pkl'), strict=False)
+
+    elif args.data.lower() == 'coil100':
+        data = sio.loadmat(args.data_dir)
+        x, y = data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'), strict=False)
+
+    #### construct dataloader for batch training
+    args.bs = num_sample
+    feature_set = FeatureDataset(x, y)
+    train_loader = DataLoader(feature_set, batch_size=args.bs, shuffle=True, drop_last=True, num_workers=0)
+    feature_set_test = FeatureDataset(x, y)
+    test_loader = DataLoader(feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False, num_workers=0)
+
+    #### loss of TCR
+    warmup_criterion = TotalCodingRate(eps=args.eps)
+
+    ### learning opt strategy
     param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
                                                                                    model.subspace.parameters() if
                                                                                    p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
     optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=args.lr, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
-    total_wamup_epochs = args.warmup
+    total_warmup_steps = args.warmup
     warmup_step = 0
-    ae_z = []
-    ys = []
-    gamma = None
+
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(args.epo))
-            model.train()
-            ### learning loss storage
-            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
-            if len(approx_err_list) >0:
-                approx_err_previous = np.median(np.array(approx_err_list))
-                approx_err_list = []
-
-            if len(gamma_estimated_list) >0 and epoch >= total_wamup_epochs:
-                with torch.no_grad():
+            with torch.no_grad():
+                if epoch >=total_warmup_steps and len(gamma_estimated_list) >0:
                     gamma = np.mean(np.array(gamma_estimated_list))
                     gamma_estimated_list = []
 
@@ -328,7 +369,9 @@ for seed in args.seeds:
                     gamma_estimated_list = []
 
                     print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
-
+            model.train()
+            ### learning loss storage
+            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -352,70 +395,13 @@ for seed in args.seeds:
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-
                         _, U = torch.linalg.eigh(L)
-
                         U_hat = U[:, :args.n_clusters]
-                        W = U_hat @ U_hat.T # [bs, bs]
+                        W = U_hat @ U_hat.T
 
-
-                    # here estimate the gamma:
-                    if epoch >= total_wamup_epochs - 1:
+                    if epoch >= total_warmup_steps - 1:
                         with torch.no_grad():
                             block = z.detach().clone().double()
-
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                   approx_pseudo)
-                            # this does not get from raw features, why the pseudo inverse not identity matrices?
-                            # plot the distance measurement
-
-                            # c_matrix = torch.from_numpy(c_matrix)
-                            #
-                            # # c_matrix = self_representation_ls(block.T)
-                            # # c_matrix = block @ (
-                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
-                            # --TODO here:
-                            # G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
-                            # diagIndices = np.diag_indices(G.shape[0])
-                            #
-                            # P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
-                            #
-                            #
-                            # P = np.array(P)
-                            # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
-                            # B[diagIndices] = 0
-                            #
-                            # c_matrix = B
-                            # B = B.T @ W.detach().cpu().numpy()
-                            # c_matrix_np = B
-                            # frobi= np.linalg.norm(B, "fro")
-                            # block_reconstructed = torch.from_numpy(B).to(device) @ block
-                            # approx_err = torch.mean((block - block_reconstructed) ** 2).item()
-                            # approx_err_list.append(approx_err)
-                            #
-                            # try:
-                            #     l2_norm_b = np.linalg.norm(B, 2)
-                            #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                            #     # print("soft_rank_global", soft_rank_global)
-                            #     gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
-                            # except Exception as e:
-                            #     print("trying to calculate soft rank ")
-                            #     print(e)
-                            #     try:
-                            #         print("add to check numerical instability")
-                            #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                            #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                            #         # print("soft_rank_global", soft_rank_global)
-                            #         gamma_estimated = args.beta * soft_rank_global / 4
-                            #     except Exception as e:
-                            #         print(e)
-                            #     gamma_estimated = gamma_previous
 
                             ############## back to l1 norm: #############
 
@@ -434,10 +420,7 @@ for seed in args.seeds:
                             #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             gamma_estimated_list.append(gamma_estimated)
 
-
-
-
-                    if epoch <= total_wamup_epochs:
+                    if epoch <= total_warmup_steps:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
@@ -451,17 +434,12 @@ for seed in args.seeds:
                             gamma = args.gamma
 
                         loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
-
-                        # else:
-                        #     loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-
-
-
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
 
-                if epoch <= total_wamup_epochs:
+
+                if warmup_step <= total_warmup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -474,11 +452,11 @@ for seed in args.seeds:
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == total_wamup_epochs:
+                if epoch == total_warmup_steps:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= total_wamup_epochs:
+                if epoch <= total_warmup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
@@ -498,8 +476,10 @@ for seed in args.seeds:
             if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
+                # here estimate the gamma:
+
             ### evaluate on test set
-            if epoch >= total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
+            if epoch >= total_warmup_steps and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -553,51 +533,5 @@ for seed in args.seeds:
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
                             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
-
-                    # if previous_nmi is None:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     if not os.path.exists(args.out_dir):
-                    #         os.makedirs(args.out_dir)
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # elif np.mean(nmi_lst) > previous_nmi:
-                    #     previous_nmi = np.mean(nmi_lst)
-                    #
-                    #     torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-                    #
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
-                    #
-                    # else:
-                    #     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                    #         [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                    #           'gamma_estimated': gamma,
-                    #           'acc': np.mean(acc_lst),
-                    #           'nmi': np.mean(nmi_lst),
-                    #           'ari': np.mean(ari_lst)
-                    #           }])])
-                    #
-                    #     result_df.to_csv(
-                    #         '{}/{}_{}.csv'.format(
-                    #             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
+    del model
+    torch.cuda.empty_cache()
