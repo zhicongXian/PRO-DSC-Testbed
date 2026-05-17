@@ -302,6 +302,7 @@ for seed in args.seeds:
     warmup_step = 0
     ae_z = []
     ys = []
+    gamma = None
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(args.epo))
@@ -312,20 +313,21 @@ for seed in args.seeds:
                 approx_err_previous = np.median(np.array(approx_err_list))
                 approx_err_list = []
 
-            if len(gamma_estimated_list) >0:
-                gamma = np.mean(np.array(gamma_estimated_list))
-                gamma_estimated_list = []
+            if len(gamma_estimated_list) >0 and epoch >= total_wamup_epochs:
+                with torch.no_grad():
+                    gamma = np.mean(np.array(gamma_estimated_list))
+                    gamma_estimated_list = []
 
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                elif gamma_previous > gamma:
-                    gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
+                    if gamma_previous is None:
+                        gamma_previous = gamma
+                    elif gamma_previous > gamma:
+                        gamma = gamma_previous
+                    else:
+                        gamma_previous = gamma
 
-                gamma_estimated_list = []
+                    gamma_estimated_list = []
 
-                print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+                    print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
 
             for step, (x, y) in enumerate(train_loader):
@@ -358,7 +360,7 @@ for seed in args.seeds:
 
 
                     # here estimate the gamma:
-                    if epoch > total_wamup_epochs:
+                    if epoch >= total_wamup_epochs - 1:
                         with torch.no_grad():
                             block = z.detach().clone().double()
 
@@ -443,12 +445,15 @@ for seed in args.seeds:
                         loss_exp = 0.5 * (torch.linalg.norm(
                             z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / args.bs  # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs  # r() loss
-                        if epoch >= total_wamup_epochs+2:
+                        # if epoch >= total_wamup_epochs+2:
+                        if gamma is None:
+                            print("NONE GAMMA VALUE AT INITIALIZATION! reset to default gamma at first : ", args.gamma)
+                            gamma = args.gamma
 
-                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
+                        loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
 
-                        else:
-                            loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
+                        # else:
+                        #     loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
 
 
 
