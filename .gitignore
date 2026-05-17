@@ -62,3 +62,5 @@ cifa100_gamma_sweep.txt
 cifa100_gamma_sweep_out.txt
 cifa10_gamma_sweep.txt
 cifa10_gamma_sweep_out.txt
+l1_norm_coil100_pretrain_knn_debug.txt
+l1_norm_coil100_pretrain_knn_debug_out.txt
