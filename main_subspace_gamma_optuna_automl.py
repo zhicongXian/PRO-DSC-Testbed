@@ -29,6 +29,8 @@ import time
 import optuna
 from optuna.integration.wandb import WeightsAndBiasesCallback
 from copy import deepcopy
+import json
+from sklearn.metrics import silhouette_score
 
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -330,10 +332,12 @@ def objective( trial : optuna.trial.Trial):
                     logits_list = []
                     z_list = []
                     y_list = []
+                    x_list = []
 
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
                         y_list.append(y.detach().cpu().numpy())
+                        x_list.append(x.detach().cpu().numpy())
                         z, logits = model(x)
                         logits_list.append(logits)
                         z_list.append(z)
@@ -347,11 +351,13 @@ def objective( trial : optuna.trial.Trial):
                     self_coeff = Pi[0]
 
                     y_np = np.concatenate(y_list, axis=0)
+                    x_np = np.concatenate(x_list, axis=0)
+
                     acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(
                         self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
                         seed=config['seed'])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
-
+                    si_score = silhouette_score(x_np, pred_lst[0])  # since we now set the same seed
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
                             'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
@@ -370,6 +376,7 @@ def objective( trial : optuna.trial.Trial):
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
                           'subspace_discovery_err:': np.mean(sde_lst),
+                          'silhouette_score': si_score,
                           'time':t_end -t_begin
                           }])])
 
@@ -387,11 +394,12 @@ def objective( trial : optuna.trial.Trial):
                             "ari": np.mean(ari_lst),
                             "gamma": config['gamma'],
                             "seed": config['seed'],
-                            'subspace_discovery_err:': np.mean(sde_lst)
+                            'subspace_discovery_err:': np.mean(sde_lst),
+                            'silhouette_score': si_score,
                         })
                     final_ari = np.mean(ari_lst)
 
-    return -final_ari
+    return -si_score
 
 # def interface_to_train():
 #     config = global_config
@@ -418,9 +426,8 @@ if __name__ == '__main__':
 
 
         # load results on weights and biases
-        study.optimize(objective, n_trials=100, callbacks=[wandbc])
+        study.optimize(objective, n_trials=5, callbacks=[wandbc])
 
-        import json
 
         best_run = {
             "trial_number": study.best_trial.number,

@@ -101,6 +101,8 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
+        if key =="experiment_name":
+            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])

@@ -30,6 +30,10 @@ import time
 import optuna
 from optuna.integration.wandb import WeightsAndBiasesCallback
 from copy import deepcopy
+from sklearn.metrics import silhouette_score
+import logging
+import json
+import time
 
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -364,10 +368,12 @@ def objective( trial : optuna.trial.Trial):
                 with torch.no_grad():
                     logits_list = []
                     y_list = []
+                    x_list = []
 
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
                         y_list.append(y.detach().cpu().numpy())
+                        x_list.append(x.detach().cpu().numpy())
                         _, logits = model(x)
                         logits_list.append(logits)
 
@@ -376,8 +382,11 @@ def objective( trial : optuna.trial.Trial):
                     self_coeff = (logits @ logits.T).abs()
 
                     y_np = np.concatenate(y_list, axis=0)
+                    x_np = np.concatenate(x_list, axis=0)
                     acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
                                                                                                                                      seed=config['seed'])
+                    # evaluate on the silhouette score:
+                    si_score = silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
@@ -396,6 +405,7 @@ def objective( trial : optuna.trial.Trial):
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
                           'subspace_discovery_err:': np.mean(sde_lst),
+                          'silhouette_score': si_score,
                           'time': t_end - t_begin
                           }])])
 
@@ -432,11 +442,12 @@ def objective( trial : optuna.trial.Trial):
                             "nmi": np.mean(nmi_lst),
                             "ari": np.mean(ari_lst),
                             'subspace discovery error': np.mean(sde_lst),
+                            'silhouette_score': si_score,
                             "gamma":config['gamma']
                         })
                     final_ari = np.mean(ari_lst)
 
-    return -final_ari
+    return -si_score
 
 
 
@@ -463,6 +474,9 @@ def load_sweep_config():
 #         train(config)
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+
+    logger = logging.getLogger(__name__)
     sampler = optuna.samplers.TPESampler(
         multivariate=True,
         group=True,
@@ -479,22 +493,16 @@ if __name__ == '__main__':
 
 
         # load results on weights and biases
-        study.optimize(objective, n_trials=100, callbacks=[wandbc])
+        study.optimize(objective, n_trials=5, callbacks=[wandbc])
 
-        import json
 
         best_run = {
             "trial_number": study.best_trial.number,
             "best_value": study.best_value,
             "best_params": study.best_params,
         }
+        logger.info( " seed: ", seed, " best param", study.best_params)
+        logger.info(" seed: ", seed, " best values", study.best_value)
 
         with open("{}/{}_{}_best_run_seed.json".format(args.out_dir, args.data.lower(), args.experiment_name), "w") as f:
             json.dump([best_run], f, indent=4)
-    # best_run = sweep.best_run()
-    #
-    # best_params = best_run.config
-    # best_metric = best_run.summary
-    #
-    # print("Best parameters:", best_params)
-    # print("Best metric:", best_metric)
