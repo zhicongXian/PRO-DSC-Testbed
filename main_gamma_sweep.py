@@ -152,6 +152,7 @@ def load_dataset(config):
         full_labels = np.concatenate([train_labels, test_labels], axis=0)  # [:downsample]
         full_samples = np.reshape(full_samples, (len(full_samples), -1))
         args.input_dim = full_samples.shape[-1]
+        config['input_dim'] = args.input_dim
         clip_features = clip_features_test = full_samples
         clip_labels = clip_labels_test = full_labels
     # y in [0, 1, ..., K-1]
@@ -217,6 +218,7 @@ def init_pipeline_with_config(model_dir, config):
 def train(config):
     previous_nmi = None
     same_seeds(config['seed'])
+    print("input dim: {}".format(config['input_dim']))
     print("current seed: {}".format(config['seed']))
     ######load dataset ############
     train_loader, test_loader = load_dataset(config)

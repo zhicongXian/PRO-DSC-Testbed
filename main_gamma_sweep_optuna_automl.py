@@ -477,11 +477,16 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     logger = logging.getLogger(__name__)
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
+    # sampler = optuna.samplers.TPESampler(
+    #     multivariate=True,
+    #     group=True,
+    #     seed=42,
+    # )
+    sampler = optuna.samplers.GPSampler(
         seed=42,
+        n_startup_trials=5,
     )
+
     pruner = optuna.pruners.HyperbandPruner()
     study = optuna.create_study(
         direction="minimize",
