@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=OpCoil100
-#SBATCH --output=rerun_gamma_sweep_coil100.txt
+#SBATCH --job-name=OpORL
+#SBATCH --output=optuna_orl.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_optuna_automl.py --data=coil100 --experiment_name=coil100_optuna_automl --seeds=[0,1,2,3,4,5,6,7,8,9] >> rerun_gamma_sweep_coil100_out.txt
+python3 ./main_subspace_gamma_optuna_automl.py --data=orl --experiment_name=orl_optuna_automl --seeds=[0,1,2,3,4,5,6,7,8,9] >> rerun_gamma_sweep_orl_out.txt
 

@@ -357,6 +357,7 @@ def objective( trial : optuna.trial.Trial):
                         self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
                         seed=config['seed'])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+                    x_np = np.reshape(x_np, (len(x_np), -1))
                     si_score = silhouette_score(x_np, pred_lst[0])  # since we now set the same seed
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
