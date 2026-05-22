@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=OpAutoCIFAR10
-#SBATCH --output=cifar10_auto_gamma.txt
+#SBATCH --job-name=PRO_DSC_optuna_si_cifar_10_mcr
+#SBATCH --output=cifar10_mcr_optuna.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl.py --data=cifar10  --experiment_name=cifar10_optuna_automl_rerun   >> cifar10_auto_gamma_out.txt
+python3 ./main_gamma_optuna_automl.py --data=cifar10_mcr --experiment_name=mnist_optuna_automl >> cifar10_mcr_optuna_out.txt
 

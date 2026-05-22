@@ -66,3 +66,9 @@ l1_norm_coil100_pretrain_knn_debug.txt
 l1_norm_coil100_pretrain_knn_debug_out.txt
 optuna_orl.txt
 rerun_gamma_sweep_orl_out.txt
+mnist_optuna.txt
+mnist_optuna_out.txt
+cifar10_mcr_optuna.txt
+cifar10_mcr_optuna_out.txt
+optuna_cifar100_auto_gamma.txt
+optuna_cifar100_auto_gamma_out.txt

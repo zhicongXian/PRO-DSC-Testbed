@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=OpORL
+#SBATCH --job-name=PRO_DSC_optuna_si_orl
 #SBATCH --output=optuna_orl.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
