@@ -472,7 +472,11 @@ for seed in args.seeds:
                             # gamma_estimated = 0.25*(np.linalg.norm(c_matrix_np@ W.detach().cpu().numpy(), 1,
                             #                                   axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("current estimated gamma: ", gamma_estimated)
-
+                            P = W
+                            ones_vector = torch.ones((len(P), 1)).to(device)
+                            projection_matrix = torch.diag(P) - P @ ones_vector
+                            inf_norm = torch.max(projection_matrix )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
+                            print("inf norm: ", inf_norm.item())
                             # gamma_estimated = 3 * 1 / (torch.trace(
                             #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             gamma_estimated_list.append(gamma_estimated)

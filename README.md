@@ -98,3 +98,8 @@ echo "Running on node: $(hostname)"
 echo "Allocated CPUs: $SLURM_CPUS_PER_TASK"
 
 python3 my_script.py
+
+# ignore packages:
+while read package; do
+    pip install "$package" || true
+done < requirements.txt
