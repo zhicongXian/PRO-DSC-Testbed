@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=GammaSweepMnist
+#SBATCH --job-name=PRO_dsc_GammaSweepMnist
 #SBATCH --output=mnist_gamma_sweep.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

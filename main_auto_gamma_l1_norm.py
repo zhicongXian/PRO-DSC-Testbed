@@ -466,7 +466,7 @@ for seed in args.seeds:
                             c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
-                            gamma_estimated = 0.25*(np.linalg.norm(c_matrix_np@ W.detach().cpu().numpy(), 1,
+                            gamma_estimated =0.25*(np.linalg.norm(c_matrix_np@ W.detach().cpu().numpy(), 1,
                                                               axis=0).sum() / args.bs) * args.beta
 
                             # gamma_estimated = 0.25*(np.linalg.norm(c_matrix_np@ W.detach().cpu().numpy(), 1,
@@ -475,7 +475,7 @@ for seed in args.seeds:
                             P = W
                             ones_vector = torch.ones((len(P), 1)).to(device)
                             projection_matrix = torch.diag(P) - P @ ones_vector
-                            inf_norm = torch.max(projection_matrix )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
+                            inf_norm = torch.max(torch.abs(projection_matrix) )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
                             print("inf norm: ", inf_norm.item())
                             # gamma_estimated = 3 * 1 / (torch.trace(
                             #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
