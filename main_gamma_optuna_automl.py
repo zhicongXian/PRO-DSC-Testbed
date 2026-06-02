@@ -180,8 +180,10 @@ def load_dataset(config):
         full_labels = np.concatenate([train_labels, test_labels], axis=0)  # [:downsample]
         full_samples = np.reshape(full_samples, (len(full_samples), -1))
         args.input_dim = full_samples.shape[-1]
-        clip_features = clip_features_test = full_samples
-        clip_labels = clip_labels_test = full_labels
+        clip_features = train_samples
+        clip_features_test = test_samples
+        clip_labels = train_labels
+        clip_labels_test = test_labels
     # y in [0, 1, ..., K-1]
 
     else:
