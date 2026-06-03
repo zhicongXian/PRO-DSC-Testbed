@@ -291,7 +291,7 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
         nmi_lst.append(nmi_score)
         pred_lst.append(pred_label)
         ari_lst.append(ari)
-        subspace_discovery_error = self_representation_loss(label, A)
+        subspace_discovery_error = self_representation_loss(label, A.T)
         sde_lst.append(subspace_discovery_error)
         si = silhouette_score(x_np, pred_label)
         si_list.append(si)
