@@ -10,7 +10,9 @@ from sklearn.metrics.cluster import _supervised
 from scipy.optimize import linear_sum_assignment
 import scipy.sparse
 import torch
-from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
+from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score, silhouette_score
+
+
 def feature_detection(A, label):
     """ Computes proportion of l_1 norm
     of each row of A that is given to connections outside of cluster
@@ -242,3 +244,65 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error(A, nclass,
     #     acc_lst = [0]
 
     return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst   # fd_error, nnz
+
+def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
+                                extra_dim=0, tol=0, seeds= [1,2]):
+    """ n_init is number of separate runs of kmeans to average over
+    computes average accuracy and nmi
+    """
+    lap = scipy.sparse.csgraph.laplacian(A, normed=True)
+    # nnz, fd_error, components, wrong_edge = basic_metrics(A, label, verbose=False)
+    # if components > nclass:
+    #     print('---Oversegmented graph, setting higher eigensolver tolerance (unstable results)---')
+    #     # oversegmented, need higher tolerance
+    #     tol = 1e-4
+
+    if solver_type == 'shift_invert':
+        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass + extra_dim, sigma=1e-6, which='LM', tol=tol)
+    elif solver_type == 'la':
+        vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass + extra_dim,
+                                                    sigma=None, which='LA', tol=tol)
+    elif solver_type == 'lm':
+        k = nclass + extra_dim
+
+        vals, embedding = scipy.sparse.linalg.eigsh(
+            2 * scipy.sparse.identity(lap.shape[0]) - lap, ncv=max(2 * k + 1, 50),
+            k=nclass + extra_dim, sigma=None, which='LM', tol=tol)
+    else:
+        raise ValueError('invalid solver')
+
+    if normalize_embed:
+        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+
+    acc_lst = []
+    nmi_lst = []
+    pred_lst = []
+    ari_lst = []
+    sde_lst = []
+    si_list = []
+    for seed in seeds:
+        cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=1, random_state=seed)
+        cluster_model.fit(embedding)
+        pred_label = cluster_model.labels_
+        acc = clustering_accuracy(label, pred_label)
+        nmi_score = nmi(label, pred_label)
+        ari = adjusted_rand_score(label, pred_label)
+        acc_lst.append(acc)
+        nmi_lst.append(nmi_score)
+        pred_lst.append(pred_label)
+        ari_lst.append(ari)
+        subspace_discovery_error = self_representation_loss(label, A)
+        sde_lst.append(subspace_discovery_error)
+        si = silhouette_score(x_np, pred_label)
+        si_list.append(si)
+
+
+        # conn_lst = connectivity_lst(A, label)
+
+    if verbose:
+        print(f'Acc mean: {np.mean(acc_lst):.3f}   ||| stdev: {np.std(acc_lst):.4f}')
+    # if components > nclass:
+    #     # do not record unstable results for oversegmented case
+    #     acc_lst = [0]
+
+    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list   # fd_error, nnz

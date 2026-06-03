@@ -72,3 +72,5 @@ cifar10_mcr_optuna.txt
 cifar10_mcr_optuna_out.txt
 optuna_cifar100_auto_gamma.txt
 optuna_cifar100_auto_gamma_out.txt
+cifar10_mcr_optuna2.txt
+cifar10_mcr_optuna_out2.txt

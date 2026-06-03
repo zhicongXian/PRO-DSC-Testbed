@@ -299,7 +299,6 @@ for seed in args.seeds:
             if len(gamma_estimated_list) > 0:
                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
 
-
                 gamma = np.nanmean(np.array(gamma_estimated_list))
 
 

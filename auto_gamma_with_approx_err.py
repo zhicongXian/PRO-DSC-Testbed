@@ -301,7 +301,7 @@ for seed in args.seeds:
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             if len(approx_err_list) >0:
-                approx_err_previous = math.sqrt(np.median(np.array(approx_err_list)))
+                approx_err_previous = math.sqrt(np.mean((np.array(approx_err_list))))
                 approx_err_list = []
                 print("previous approx error: ", approx_err_previous)
 
@@ -354,6 +354,22 @@ for seed in args.seeds:
                     with torch.no_grad():
                         if epoch > total_wamup_epochs:
                             block = z.detach().clone().double()
+
+                            if epoch == total_wamup_epochs + 1:
+                                # kernel density estimator:
+                                from sklearn.neighbors import NearestNeighbors
+                                import numpy as np
+
+                                k = 10
+                                x=block.cpu().numpy()
+                                nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
+                                dist, _ = nbrs.kneighbors(x)
+
+                                r = dist[:, -1]  # k-th neighbor distance
+                                d = block.shape[1]
+                                # density_score = k /  (r + 1e-12)
+                                print("density score: ", 1/ np.mean(r))
+                                density_score = 1/np.mean(r)
 
                             approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
                             c_matrix = np.dot(block.detach().cpu().numpy(),
@@ -412,8 +428,8 @@ for seed in args.seeds:
                             c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
-                            gamma_estimated = 0.25 * (np.linalg.norm(c_matrix_np, 1,
-                                                                     axis=0).sum() / args.bs) * args.beta
+                            gamma_estimated =0.25* (np.linalg.norm(c_matrix_np, 1,
+                                                                     axis=0).sum() / args.bs) * args.beta #/ approx_err_previous
 
                             # gamma_estimated = 0.25 * (np.linalg.norm(c_matrix_np @ W.detach().cpu().numpy(), 1,
                             #                                          axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
@@ -426,8 +442,15 @@ for seed in args.seeds:
 
                             ones_vector = torch.ones((len(P), 1)).to(device)
                             projection_matrix = torch.diag(P) - P @ ones_vector
-                            inf_norm = torch.max(projection_matrix )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
+                            inf_norm = torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf')) # torch.max(projection_matrix )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
                             print("inf norm: ", inf_norm.item())
+                            divider = approx_err*inf_norm
+                            print("divider: ", divider)
+
+                            # gamma estimator new:
+                            gamma_estimated_new = 4*(np.linalg.norm(c_matrix_np, 1,
+                                                                     axis=0).sum() / args.bs) * args.beta/divider.detach().cpu()/math.sqrt(abs(math.log10(density_score)))
+                            print("new gamma: ", gamma_estimated_new)
                             # gamma_estimated = 3 * 1 / (torch.trace(
                             #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             gamma_estimated_list.append(gamma_estimated)
