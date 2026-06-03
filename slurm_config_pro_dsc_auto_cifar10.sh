@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_auto_gamma.py --data=cifar10  --experiment_name=cifar10_auto_gamma   >> cifar10_auto_gamma_out.txt
+python3 ./main_auto_gamma_effective_rank.py --data=cifar10  --experiment_name=cifar10_auto_gamma2   >> cifar10_auto_gamma_out.txt
 
