@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_sweep.py --data=mnist --experiment_name=mnist_wandb_gamma_sweep >> mnist_gamma_sweep_out.txt
+python3 ./main_gamma_sweep.py --data=mnist --experiment_name=mnist_wandb_gamma_sweep2 >> mnist_gamma_sweep_out.txt
 
