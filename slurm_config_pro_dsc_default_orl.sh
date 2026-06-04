@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_default_gamma.py --data=orl --experiment_name=orl_default >> orl_default_out.txt
+python3 ./main_subspace_default_gamma.py --data=orl --experiment_name=orl_optuna_default >> orl_default_out.txt
 

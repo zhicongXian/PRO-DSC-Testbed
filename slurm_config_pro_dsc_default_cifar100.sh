@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_default_gamma.py --data=cifar100 --experiment_name=cifar100_default >> cifar100_default_out.txt
+python3 ./main_default_gamma.py --data=cifar100 --experiment_name=cifar100_optuna_default >> cifar100_default_out.txt
 
