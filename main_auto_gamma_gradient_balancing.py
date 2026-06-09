@@ -287,38 +287,42 @@ train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, dr
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
 test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False)
 
-#### construct the model:
 
-model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
-sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
-quantile_prob = args.quantile_prob
-
-
-#### loss of logdet()
-warmup_criterion = TotalCodingRate(eps=args.eps)
-
-### optimizer
-param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if p.requires_grad]
-param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
-optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
-optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
-scaler = GradScaler()
-
-### warmup iteration setting 
-total_wamup_steps = args.warmup
-warmup_step = 0
-gamma_estimated_list = []
-# calculate the number of steps per epoch:
-candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(device)
-nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
-
-result_df = pd.DataFrame()
-gamma = None
-gamma_previous = None
-gradient_ratio = 1
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
+    #### construct the model:
+
+    model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(
+        device)  # input_dim=768
+    sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+    quantile_prob = args.quantile_prob
+
+    #### loss of logdet()
+    warmup_criterion = TotalCodingRate(eps=args.eps)
+
+    ### optimizer
+    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
+                                                                                   model.subspace.parameters() if
+                                                                                   p.requires_grad]
+    param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
+    optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
+    scaler = GradScaler()
+
+    ### warmup iteration setting
+    total_wamup_steps = args.warmup
+    warmup_step = 0
+    gamma_estimated_list = []
+    # calculate the number of steps per epoch:
+    candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(device)
+    nb_steps_per_epoch = math.ceil(len(clip_features) / args.bs)
+
+    result_df = pd.DataFrame()
+    gamma = None
+    gamma_previous = None
+    gradient_ratio = 1
+
     with tqdm(total=args.epo) as progress_bar:
         t_begin = time.time()
         for epoch in range(args.epo):
@@ -326,6 +330,11 @@ for seed in args.seeds:
             if epoch == total_wamup_steps + 1:
                 for param in param_list:
                     param.requires_grad = False
+            if epoch == total_wamup_steps + 2:
+                # reactivate the gradient
+                for param in param_list:
+                    param.requires_grad = True
+
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
@@ -434,7 +443,7 @@ for seed in args.seeds:
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                         # # here you can add your initial estimates for Z and for C. and subsequently update!
-                        if epoch> total_wamup_steps: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                        if epoch> total_wamup_steps and epoch <= total_wamup_steps + 2: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
                             with torch.no_grad():
                                 block = z.detach().clone().double()
 
@@ -517,15 +526,15 @@ for seed in args.seeds:
                                 gamma_estimated_list.append(gamma_estimated)
                                 print("estimated gamma: ",gamma_estimated)
 
-                        if epoch >= total_wamup_steps+2:
+                        if epoch >= total_wamup_steps+1:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
-                            loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
+                            # loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
                             if gamma is None:
                                 loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
                             else:
 
-                                loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
+                                loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl # + 1e-3*loss_enforce_same_block
                             print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
                         else:
@@ -553,11 +562,18 @@ for seed in args.seeds:
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
-                else:
+                elif epoch <= total_wamup_steps + 2:
                     optimizer.zero_grad()
                     optimizerc.zero_grad()
                     scaler.scale(loss).backward()
                     # scaler.step(optimizer)
+                    scaler.step(optimizerc)
+                    scaler.update()
+                else:
+                    optimizer.zero_grad()
+                    optimizerc.zero_grad()
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
                     scaler.step(optimizerc)
                     scaler.update()
 
