@@ -322,6 +322,10 @@ for seed in args.seeds:
     with tqdm(total=args.epo) as progress_bar:
         t_begin = time.time()
         for epoch in range(args.epo):
+            # start to freeze layer after warm up:
+            if epoch == total_wamup_steps + 1:
+                for param in param_list:
+                    param.requires_grad = False
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
@@ -487,7 +491,7 @@ for seed in args.seeds:
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
                                 print("current approx err: ", approx_err)
-                                gamma_estimated = gamma_estimated/gradient_ratio
+                                # gamma_estimated = gamma_estimated/gradient_ratio
                                 # frobi= np.linalg.norm(B, "fro")
                                 #
                                 # try:
