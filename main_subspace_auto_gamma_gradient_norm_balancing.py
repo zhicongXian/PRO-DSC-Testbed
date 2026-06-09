@@ -403,7 +403,7 @@ for seed in args.seeds:
 
                     if gamma_previous is None:
                         gamma_previous = gamma
-                    elif gamma_previous > gamma:
+                    elif gamma_previous < gamma:
                         gamma = gamma_previous
                     else:
                         gamma_previous = gamma
