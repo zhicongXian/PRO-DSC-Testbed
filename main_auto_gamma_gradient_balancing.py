@@ -483,10 +483,11 @@ for seed in args.seeds:
                                 c_matrix[diagIndices] = 0
                                 # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated =4* (np.linalg.norm(c_matrix, 1,
+                                gamma_estimated =1.0* (np.linalg.norm(c_matrix, 1,
                                                                   axis=0).sum() / args.bs) * args.beta
                                 print("before gardient ration: ", gamma_estimated)
-                                print("after gardient ration: ", gamma_estimated/gradient_ratio)
+                                gamma_estimated = gamma_estimated * gradient_ratio
+                                print("after gardient ration: ", gamma_estimated)
                                 block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
@@ -544,7 +545,7 @@ for seed in args.seeds:
                         print("new lambda_bd", g_bd)
                         print("new lambda_se", g_se)
                         print("ratio: ", (g_bd / g_se))
-                        gradient_ratio = g_bd / g_se
+                        gradient_ratio = g_bd # / g_se
                         # gamma_estimated_list = [i / gradient_ratio for i in gamma_estimated_list]
 
                 if epoch <= total_wamup_steps:
@@ -556,7 +557,7 @@ for seed in args.seeds:
                     optimizer.zero_grad()
                     optimizerc.zero_grad()
                     scaler.scale(loss).backward()
-                    scaler.step(optimizer)
+                    # scaler.step(optimizer)
                     scaler.step(optimizerc)
                     scaler.update()
 
