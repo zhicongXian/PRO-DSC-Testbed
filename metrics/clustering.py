@@ -232,7 +232,7 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error(A, nclass,
         nmi_lst.append(nmi_score)
         pred_lst.append(pred_label)
         ari_lst.append(ari)
-        subspace_discovery_error = self_representation_loss(label, A)
+        subspace_discovery_error = self_representation_loss(label, A.T )
         sde_lst.append(subspace_discovery_error)
 
     # conn_lst = connectivity_lst(A, label)

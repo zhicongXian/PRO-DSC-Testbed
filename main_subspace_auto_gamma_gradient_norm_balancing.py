@@ -22,13 +22,14 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
 import torch.nn.functional as F
 import scipy.io as sio
-#from model.DSCNet import PRO_DSC
+from model.DSCNet import PRO_DSC
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import math as math
+from sklearn.neighbors import NearestNeighbors
 
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -80,11 +81,62 @@ parser.add_argument('--validate_every', type=int, default=25,
 parser.add_argument('--load_pretrain', dest='load_pretrain', action='store_true')
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-parser.add_argument('--seeds', type=int, default=[42],
-                    help='random seed')
+# parser.add_argument('--seeds', type=int, default=[42],
+#                     help='random seed')
 
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 
 args = parser.parse_args()
+
+def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
+    g = torch.autograd.grad(
+        loss,
+        tensor,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )[0]
+
+    if g is None:
+        return torch.tensor(0.0, device=tensor.device)
+
+
+    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
+
+def update_balanced_weights_from_tensor(
+    L_se,
+    L_bd,
+    intermediate_tensor,
+    lambda_se,
+    lambda_bd,
+    momentum=0.9,
+    eps=1e-8
+):
+    g_se = grad_norm_wrt_tensor(L_se, intermediate_tensor)
+    g_bd = grad_norm_wrt_tensor(L_bd, intermediate_tensor)
+
+    g_avg = 0.5 * (g_se + g_bd)
+
+    new_lambda_se = g_avg / (g_se + eps)
+    new_lambda_bd = g_avg / (g_bd + eps)
+
+    lambda_se = momentum * lambda_se + (1 - momentum) * new_lambda_se
+    lambda_bd = momentum * lambda_bd + (1 - momentum) * new_lambda_bd
+
+    return lambda_se.detach(), lambda_bd.detach(), g_se.item(), g_bd.item()
 
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
@@ -118,6 +170,8 @@ assert args.data.lower() in datasets_list, "Only {} are supported".format(','.jo
 with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
+        if key == "seeds":
+            continue
         setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
@@ -128,12 +182,11 @@ writer = init_pipeline(dir_name, args)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-#
-
+model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim,channels=args.channels,kernels=args.kernels).to(device)
+sink_layer = SinkhornDistance(args.pieta, max_iter=1)
 
 # Loading features and labels
 if args.data.lower() in ['cifar10','cifar100','cifar20']:
-    from model.model import PRO_DSC
     feature_dict = torch.load(args.data_dir)
     x_train = feature_dict['features'][:50000]
     y_labels = feature_dict['ys'][:50000]
@@ -149,7 +202,6 @@ if args.data.lower() in ['cifar10','cifar100','cifar20']:
     model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
 elif args.data.lower() == "coil100":
-    from model.DSCNet import PRO_DSC
     if args.load_pretrain:
         data = sio.loadmat(args.data_dir)
         x, y = data['fea'].reshape((-1, 1, 32, 32)), data['gnd'] # he has another parameter setting than the original dataset 128 x 128 x3
@@ -209,21 +261,17 @@ elif args.data.lower() == "coil100":
 
 # here space for orl eylab
 elif args.data.lower() == 'orl':
-    from model.DSCNet import PRO_DSC
     # Loading features and labels
     data = sio.loadmat(args.data_dir)
     x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y'] # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
     y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
     # network and optimization parameters
     num_sample = x.shape[0]
-    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
-        device)
     temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'),strict=False)
     x_train = x_test = x
     y_labels = y_test = y
 
 elif args.data.lower() == 'eyaleb':
-    from model.DSCNet import PRO_DSC
     data = sio.loadmat(args.data_dir)
     img = data['Y']
     I = []
@@ -241,14 +289,11 @@ elif args.data.lower() == 'eyaleb':
 
     num_class = 38
     num_sample = num_class * 64
-    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
-        device)
     temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/yaleb.pkl'),strict=False)
 
     x_train = x_test = x
     y_labels = y_test = y
 else:
-    from model import PRO_DSC
     feature_dict = torch.load(args.data_dir)
     x_train = feature_dict['features']
     y_labels = feature_dict['ys']
@@ -258,6 +303,7 @@ else:
     y_test = feature_dict['ys']
     model = PRO_DSC(input_dim=768, hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device)  # input_dim=768
     sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+args.bs = num_sample
 #### construct dataloader for batch training
 train_feature_set = FeatureDataset(x_train, y_labels)
 train_loader = DataLoader(train_feature_set, batch_size=args.bs, shuffle=True, drop_last=True)
@@ -277,50 +323,97 @@ gamma_previous = None
 approx_err_list = []
 approx_err_previous = 1
 
+lambda_se = torch.tensor(1.0)
+lambda_bd = torch.tensor(1.0)
+
+gradient_ratio = 1.0
 for seed in args.seeds:
     same_seeds(seed)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
+        device)
+    sink_layer = SinkhornDistance(args.pieta, max_iter=1)
 
-    ### optimizer
+    if args.data.lower() == 'orl':
+        # Loading features and labels
+        data = sio.loadmat(args.data_dir)
+        x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y']  # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        # network and optimization parameters
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'), strict=False)
+
+    elif args.data.lower() == 'eyaleb':
+        data = sio.loadmat(args.data_dir)
+        img = data['Y']
+        I = []
+        Label = []
+        for i in range(img.shape[2]):
+            for j in range(img.shape[1]):
+                temp = np.reshape(img[:, j, i], [42, 48])
+                Label.append(i)
+                I.append(temp)
+        I = np.array(I)
+        y = np.array(Label[:])
+        Img = np.transpose(I, [0, 2, 1])
+        x = np.expand_dims(Img[:], 1).astype(float)
+        y = y - y.min()
+
+        num_class = 38
+        num_sample = num_class * 64
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/yaleb.pkl'), strict=False)
+
+    elif args.data.lower() == 'coil100':
+        data = sio.loadmat(args.data_dir)
+        x, y = data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'), strict=False)
+
+    #### construct dataloader for batch training
+    args.bs = num_sample
+    feature_set = FeatureDataset(x, y)
+    train_loader = DataLoader(feature_set, batch_size=args.bs, shuffle=True, drop_last=True, num_workers=0)
+    feature_set_test = FeatureDataset(x, y)
+    test_loader = DataLoader(feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False, num_workers=0)
+
+    #### loss of TCR
+    warmup_criterion = TotalCodingRate(eps=args.eps)
+
+    ### learning opt strategy
     param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
                                                                                    model.subspace.parameters() if
                                                                                    p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
     optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=args.lr, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
-    total_wamup_epochs = args.warmup
+    total_warmup_steps = args.warmup
     warmup_step = 0
-    ae_z = []
-    ys = []
-    local_instric_dim = 1
+
     with tqdm(total=args.epo) as progress_bar:
         for epoch in range(args.epo):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(args.epo))
+            with torch.no_grad():
+                if epoch >=total_warmup_steps and len(gamma_estimated_list) >0:
+                    gamma = np.mean(np.array(gamma_estimated_list))
+                    gamma_estimated_list = []
+
+                    if gamma_previous is None:
+                        gamma_previous = gamma
+                    elif gamma_previous > gamma:
+                        gamma = gamma_previous
+                    else:
+                        gamma_previous = gamma
+
+                    gamma_estimated_list = []
+
+                    print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
             model.train()
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
-            if len(approx_err_list) >0:
-                approx_err_previous = math.sqrt(np.mean((np.array(approx_err_list))))
-                approx_err_list = []
-                print("previous approx error: ", approx_err_previous)
-
-            if len(gamma_estimated_list) >0:
-                gamma = np.mean(np.array(gamma_estimated_list))
-                gamma_estimated_list = []
-
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                # elif gamma_previous < gamma: # I only try to keep
-                #     gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
-
-                gamma_estimated_list = []
-
-                print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
-
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -344,152 +437,45 @@ for seed in args.seeds:
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-
                         _, U = torch.linalg.eigh(L)
-
                         U_hat = U[:, :args.n_clusters]
-                        W = U_hat @ U_hat.T # [bs, bs]
+                        W = U_hat @ U_hat.T
 
-
-                    # here estimate the gamma:
-                    with torch.no_grad():
-                        if epoch > total_wamup_epochs:
+                    if epoch >= total_warmup_steps - 1:
+                        with torch.no_grad():
                             block = z.detach().clone().double()
 
-                            if epoch >= total_wamup_epochs:
-                                # kernel density estimator:
-                                from sklearn.neighbors import NearestNeighbors
-                                import numpy as np
-
-                                k = 10
-                                x=block.cpu().numpy()
-                                nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
-                                dist, _ = nbrs.kneighbors(x)
-                                # density_score = k /  (r + 1e-12)
-                                r = dist[:, -1]  # k-th neighbor distance
-                                d = block.shape[1]
-                                print("average density score: ", np.mean(1 / r))
-                                density_score = np.mean(1 / r)
-                                # eps = 1e-12
-                                #
-                                # # remove self-distance at index 0
-                                # distances = dist[:, 1:]
-                                #
-                                # r_k = dist[:, -1] + eps
-                                #
-                                # lid = -k / np.sum(np.log((distances + eps) / r_k[:, None]), axis=1)
-                                # local_instric_dim = np.mean(lid)
-                                # print("local instric dimensions: ", np.mean(lid))
-
+                            ############## back to l1 norm: #############
 
                             approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            c_matrix = np.dot(block.detach().cpu().numpy(),
-                                              approx_pseudo)
-                            # this does not get from raw features, why the pseudo inverse not identity matrices?
-                            # plot the distance measurement
-
-                            # c_matrix = torch.from_numpy(c_matrix)
-                            #
-                            # # c_matrix = self_representation_ls(block.T)
-                            # # c_matrix = block @ (
-                            # #              torch.linalg.pinv(block @ block.t()) @ block).t()  ##--This needs to be TODO!
-                            # L_c = torch.diag(c_matrix.sum(1)) - c_matrix
-                            # _, c_u = torch.linalg.eigh(
-                            #     c_matrix)  # this is the laplacian matrix for spectral clustering, L is coming from the self-expressive coefficient C
-                            # c_u_hat = c_u[:, :args.n_clusters]  # U is the eigenvectors
-                            # c_W = c_u_hat @ c_u_hat.T  # L is a square matrix again
-
-                            # --TODO here:
-                            # G = block @ block.T # block.T @ block # B of shape: [bs, ft_sz]
-                            # diagIndices = np.diag_indices(G.shape[0])
-                            #
-                            # P = jnp.linalg.inv(G.detach().cpu().numpy())  # imqrginv_fixed(G.detach().cpu().numpy())
-                            #
-                            #
-                            # P = np.array(P)
-                            # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
-                            # B[diagIndices] = 0
-                            #
-                            # c_matrix = B
-                            # B = B.T @ W.detach().cpu().numpy()
-                            # frobi= np.linalg.norm(B, "fro")
-                            # block_reconstructed = torch.from_numpy(B).to(device) @ block
-                            # approx_err = torch.mean((block - block_reconstructed) ** 2).item()
-                            # approx_err_list.append(approx_err)
-                            #
-                            # try:
-                            #     l2_norm_b = np.linalg.norm(B, 2)
-                            #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                            #     # print("soft_rank_global", soft_rank_global)
-                            #     gamma_estimated = args.beta *  soft_rank_global / 4  # 1 / lambda_hat
-                            # except Exception as e:
-                            #     print("trying to calculate soft rank ")
-                            #     print(e)
-                            #     try:
-                            #         print("add to check numerical instability")
-                            #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                            #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                            #         # print("soft_rank_global", soft_rank_global)
-                            #         gamma_estimated = args.beta * soft_rank_global / 4
-                            #     except Exception as e:
-                            #         print(e)
-                            #     gamma_estimated = gamma_previous
-                            c_matrix_np = c_matrix
+                            c_matrix_np = np.dot(block.detach().cpu().numpy(),
+                                                 approx_pseudo)
                             diagIndices = np.diag_indices(c_matrix_np.shape[0])
                             c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
-                            gamma_estimated =4*(np.linalg.norm(c_matrix_np, 1,
-                                                                     axis=0).sum() / args.bs) * args.beta #/ approx_err_previous
-
-                            # gamma_estimated = 0.25 * (np.linalg.norm(c_matrix_np @ W.detach().cpu().numpy(), 1,
-                            #                                          axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            print("current estimated gamma: ", gamma_estimated)
-                            block_reconstructed = torch.from_numpy(c_matrix_np).to(device) @ block
-                            approx_err = torch.sum((block - block_reconstructed) ** 2).item()/args.bs
-                            approx_err_list.append(approx_err)
-                            print("current approx err: ", approx_err)
-                            P = W
-
-                            ones_vector = torch.ones((len(P), 1)).to(device)
-                            ###########--TODO NOT SO SURE
-                            # projection_matrix = torch.diag(P) - P @ ones_vector
-                            # inf_norm = torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf')) # torch.max(projection_matrix )#torch.linalg.norm(projection_matrix @ ones_vector,  ord=float('inf'))
-                            # print("inf norm: ", inf_norm.item())
-                            ###########################################
-                            diagW = torch.diag(W)[:, None]
-                            ones_row = torch.ones((1, W.shape[0])).to(device)
-                            gradient = diagW @ ones_row - W
-                            inf_norm = torch.linalg.norm(gradient, ord=float('inf'))
-                            print("inf norm: ", inf_norm.item())
-                            divider = approx_err*inf_norm
-                            print("divider: ", divider)
-                            print("number of clusters: ", args.n_clusters)
-                            sqrt_log_rho = math.sqrt(abs(math.log(density_score)))
-                            N = len(P)
-                            n = N /args.n_clusters
-                            print("DATA DENSITY SIMPLE: ", math.sqrt(n)/math.log(N))
-                            print("density score square root: ",sqrt_log_rho)
-                            new_constant = math.sqrt(8/approx_err)#math.sqrt(len(P)/args.n_clusters) /math.log(len(P))
-                            print("new constant: ", new_constant)
-                            l_n = math.log(len(P))*math.sqrt(approx_err/8/len(P)*args.n_clusters)
+                            # try to get the ratio of norm balancing:
+                            # densoty estimation:
+                            k = 10
+                            x = block.cpu().numpy()
+                            nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
+                            dist, _ = nbrs.kneighbors(x)
+                            r = dist[:, -1]  # k-th neighbor distance
+                            d = block.shape[1]
+                            print("average density score: ", np.mean(1 / r))
+                            density_score = np.mean(1 / r)
 
 
-                            # gamma estimator new:
-                            gamma_estimated_new = 4*(np.linalg.norm(c_matrix_np, 1,
-                                                                     axis=0).sum() / args.bs) * args.beta/divider.detach().cpu()*sqrt_log_rho#math.sqrt(abs(math.log(density_score)))
-                            l2 = 1 / gamma_estimated_new * approx_err / math.sqrt(8)
-                            l_max = max(l_n, l2)
-                            print("local instric dimensions: ", local_instric_dim)
-                            print("new gamma: ", 1/l_max)
+                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
+                                                              axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
+                            print("before gradient ratio : ", gamma_estimated)
+                            print("after gradient ratio : ", gamma_estimated/gradient_ratio)
+
                             # gamma_estimated = 3 * 1 / (torch.trace(
                             #     L_c.T @ c_W) / args.bs)  # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
-                            gamma_estimated_list.append(gamma_estimated)
+                            gamma_estimated_list.append(gamma_estimated/gradient_ratio)
 
-
-
-
-                    if epoch <= total_wamup_epochs:
+                    if epoch <= total_warmup_steps:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
@@ -497,20 +483,31 @@ for seed in args.seeds:
                         loss_exp = 0.5 * (torch.linalg.norm(
                             z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / args.bs  # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs  # r() loss
-                        if epoch >= total_wamup_epochs+2:
+                        # if epoch >= total_wamup_epochs+2:
+                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+                            L_se=loss_exp,
+                            L_bd=loss_bl,
+                            intermediate_tensor=self_coeff,#Sign_self_coeff.mul(self_coeff),
+                            lambda_se=lambda_se,
+                            lambda_bd=lambda_bd
+                        )
+                        print("gradient norm self-expressive", g_se)
+                        print("gradient norm block diagonal", g_bd)
+                        print("ratio: ", (g_bd / g_se))
+                        gradient_ratio = g_bd / g_se
+                        # gamma_estimated_list = [i/gradient_ratio for i in gamma_estimated_list]
 
-                            loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
+                        if gamma is None:
+                            print("NONE GAMMA VALUE AT INITIALIZATION! reset to default gamma at first : ", args.gamma)
+                            gamma = args.gamma
 
-                        else:
-                            loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
-
-
-
+                        loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
 
-                if epoch <= total_wamup_epochs:
+
+                if warmup_step <= total_warmup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -523,11 +520,11 @@ for seed in args.seeds:
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == total_wamup_epochs:
+                if epoch == total_warmup_steps:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= total_wamup_epochs:
+                if epoch <= total_warmup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
@@ -547,8 +544,10 @@ for seed in args.seeds:
             if (epoch + 1) % args.save_every == 0 or (epoch + 1) == args.epo:
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
+                # here estimate the gamma:
+
             ### evaluate on test set
-            if epoch >= total_wamup_epochs and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
+            if epoch >= total_warmup_steps and ((epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo):
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 with torch.no_grad():
@@ -572,50 +571,35 @@ for seed in args.seeds:
                     self_coeff = Pi[0]
 
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst = spectral_clustering_metrics_with_ari(self_coeff.detach().cpu().numpy(),
-                                                                             args.n_clusters, y_np,n_init=2, seed=seed)
+
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(
+                        self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
+                        seed=seed)
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
+
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
-                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                                np.max(sde_lst), epoch))
                     print(
-                        'Logits mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {},  epoch {}\n'.format(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                             np.mean(acc_lst), np.max(acc_lst),
-                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), epoch))
+                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                            np.max(sde_lst), epoch))
 
-                    if previous_nmi is None:
-                        previous_nmi = np.mean(nmi_lst)
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
+                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                        [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                          'gamma_estimated': gamma,
+                          'acc': np.mean(acc_lst),
+                          'nmi': np.mean(nmi_lst),
+                          'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst)
+                          }])])
 
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-
-                        if not os.path.exists(args.out_dir):
-                            os.makedirs(args.out_dir)
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
-
-                    elif np.mean(nmi_lst) > previous_nmi:
-                        previous_nmi = np.mean(nmi_lst)
-
-                        torch.save(model.state_dict(), '{}/checkpoints/best_model{}.pt'.format(dir_name, epoch))
-
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst)
-                              }])])
-
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                    result_df.to_csv(
+                        '{}/{}_{}.csv'.format(
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
+    del model
+    torch.cuda.empty_cache()

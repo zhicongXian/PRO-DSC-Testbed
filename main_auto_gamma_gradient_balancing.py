@@ -8,7 +8,7 @@ import  jax.numpy as jnp
 import numpy as np
 
 from lambda_utils.lambda_estimate_utils import estimate_lambda_local
-
+from sklearn.neighbors import NearestNeighbors
 
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
@@ -29,6 +29,41 @@ def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
         ))
     ).T  # [np.argsort(p), ::]
 
+def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
+    g = torch.autograd.grad(
+        loss,
+        tensor,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )[0]
+
+    if g is None:
+        return torch.tensor(0.0, device=tensor.device)
+    print("gradient shape", g.shape)
+    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
+
+def update_balanced_weights_from_tensor(
+    L_se,
+    L_bd,
+    intermediate_tensor,
+    lambda_se,
+    lambda_bd,
+    momentum=0.9,
+    eps=1e-8
+):
+    g_se = grad_norm_wrt_tensor(L_se, intermediate_tensor)
+    g_bd = grad_norm_wrt_tensor(L_bd, intermediate_tensor)
+
+    g_avg = 0.5 * (g_se + g_bd)
+
+    new_lambda_se = g_avg / (g_se + eps)
+    new_lambda_bd = g_avg / (g_bd + eps)
+
+    lambda_se = momentum * lambda_se + (1 - momentum) * new_lambda_se
+    lambda_bd = momentum * lambda_bd + (1 - momentum) * new_lambda_bd
+
+    return lambda_se.detach(), lambda_bd.detach(), g_se.item(), g_bd.item()
 
 sys.path.append('./')
 
@@ -56,7 +91,6 @@ from metrics.clustering import spectral_clustering_metrics, spectral_clustering_
 import pandas as pd
 import pickle
 import time
-from sklearn.neighbors import NearestNeighbors
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -130,7 +164,8 @@ def parse_list(value):
 parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
 # Use like:
 args = parser.parse_args()
-
+lambda_se = torch.tensor(1.0)
+lambda_bd = torch.tensor(1.0)
 datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
@@ -233,7 +268,8 @@ elif args.data.lower() == 'mnist':
     args.input_dim = full_samples.shape[-1]
     clip_features = train_samples
     clip_features_test = test_samples
-    clip_labels = clip_labels_test = full_labels
+    clip_labels = train_labels
+    clip_labels_test = test_labels
     train_ids = np.arange(len(clip_labels))
    # y in [0, 1, ..., K-1]
 else:
@@ -279,6 +315,7 @@ nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
 result_df = pd.DataFrame()
 gamma = None
 gamma_previous = None
+gradient_ratio = 1
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
@@ -295,11 +332,11 @@ for seed in args.seeds:
 
                 gamma = np.nanmean(np.array(gamma_estimated_list))
 
-
-                # remove the scheduling
+                #
+                # # remove the scheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
-                elif gamma_previous > gamma:
+                elif gamma_previous < gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
@@ -398,7 +435,7 @@ for seed in args.seeds:
                                 block = z.detach().clone().double()
 
                                 # G =  block @ block.T
-                                diagIndices = np.diag_indices(block.shape[0])
+                                # diagIndices = np.diag_indices(G.shape[0])
                                 #
                                 # P = jnp.linalg.inv(G.detach().cpu().numpy())
                                 # without excluding the diagonal elements:
@@ -407,31 +444,15 @@ for seed in args.seeds:
                                 approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
                                 c_matrix = np.dot(block.detach().cpu().numpy(),
                                                         approx_pseudo)
-
-
-                                # density estimation:
-
-
-
-
+                                B = c_matrix
                                 k = 10
-                                x=block.cpu().numpy()
+                                x = block.cpu().numpy()
                                 nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
                                 dist, _ = nbrs.kneighbors(x)
-                                # density_score = k /  (r + 1e-12)
                                 r = dist[:, -1]  # k-th neighbor distance
                                 d = block.shape[1]
-                                print("density score: ", 1 / np.mean(r))
-
-                                # density_score = 1 / np.mean(r)
-                                # eps = 1e-12
-                                #
-                                # # remove self-distance at index 0
-                                # distances = dist[:, 1:]
-                                #
-                                # r_k = dist[:, -1] + eps
-
-                                # c_matrix = torch.from_numpy(c_matrix)
+                                print("average density score: ", np.mean(1 / r))
+                                density_score = np.mean(1 / r)
                                 # even older, no fast implementation
                                 # c_matrix = self_representation_ls(block.T)
                                 # c_matrix = block @ (
@@ -454,30 +475,39 @@ for seed in args.seeds:
 
                                 #######################################
 
-
+                                diagIndices = np.diag_indices(c_matrix.shape[0])
                                 c_matrix[diagIndices] = 0
-                                B = c_matrix
+                                # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
+                                gamma_estimated = (np.linalg.norm(c_matrix, 1,
+                                                                  axis=0).sum() / args.bs) * args.beta
+                                print("before gardient ration: ", gamma_estimated)
+                                print("after gardient ration: ", gamma_estimated/gradient_ratio)
+                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
-                                frobi= np.linalg.norm(B, "fro")
+                                print("current approx err: ", approx_err)
+                                gamma_estimated = gamma_estimated/gradient_ratio
+                                # frobi= np.linalg.norm(B, "fro")
+                                #
+                                # try:
+                                #     l2_norm_b = np.linalg.norm(B, 2)
+                                #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                                #     print("soft_rank_global", soft_rank_global)
+                                #     gamma_estimated = args.beta * soft_rank_global/4
+                                # # to catch the SVD does not converge error:
+                                # except Exception as e:
+                                #     print(e)
+                                #     try: #  retrial for SVD computation
+                                #         print("add to check numerical instability")
+                                #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                #         print("soft_rank_global", soft_rank_global)
+                                #         gamma_estimated = args.beta * soft_rank_global/4
+                                #     except Exception as e:
+                                #         print(e)
+                                #     gamma_estimated = gamma_previous
 
-                                try:
-                                    l2_norm_b = np.linalg.norm(B, 2)
-                                    soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                                    print("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global)/args.n_clusters/2
-                                # to catch the SVD does not converge error:
-                                except Exception as e:
-                                    print(e)
-                                    try: #  retrial for SVD computation
-                                        print("add to check numerical instability")
-                                        l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                        print("soft_rank_global", soft_rank_global)
-                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global)/args.n_clusters/2
-                                    except Exception as e:
-                                        print(e)
-                                    gamma_estimated = gamma_previous
 
                                 gamma_estimated_list.append(gamma_estimated)
                                 print("estimated gamma: ",gamma_estimated)
@@ -500,6 +530,18 @@ for seed in args.seeds:
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
+                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+                            L_se=loss_exp,
+                            L_bd=loss_bl,
+                            intermediate_tensor=self_coeff,
+                            lambda_se=lambda_se,
+                            lambda_bd=lambda_bd
+                        )
+                        print("new lambda_bd", g_bd)
+                        print("new lambda_se", g_se)
+                        print("ratio: ", (g_bd / g_se))
+                        gradient_ratio = g_bd / g_se
+                        # gamma_estimated_list = [i / gradient_ratio for i in gamma_estimated_list]
 
                 if epoch <= total_wamup_steps:
                     optimizer.zero_grad()
