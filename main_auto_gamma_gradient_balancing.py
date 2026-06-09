@@ -322,15 +322,16 @@ for seed in args.seeds:
     gamma = None
     gamma_previous = None
     gradient_ratio = 1
-
+    validate_every = 10
+    # (epoch - nb_warm_up_steps) % validate_every == 0
     with tqdm(total=args.epo) as progress_bar:
         t_begin = time.time()
         for epoch in range(args.epo):
             # start to freeze layer after warm up:
-            if epoch == total_wamup_steps + 1:
+            if (epoch - total_wamup_steps -1)% validate_every == 0:
                 for param in param_list:
                     param.requires_grad = False
-            if epoch == total_wamup_steps + 2:
+            if (epoch - total_wamup_steps -2)% validate_every == 0:
                 # reactivate the gradient
                 for param in param_list:
                     param.requires_grad = True
@@ -443,7 +444,8 @@ for seed in args.seeds:
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                         # # here you can add your initial estimates for Z and for C. and subsequently update!
-                        if epoch> total_wamup_steps and epoch <= total_wamup_steps + 2: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                        # if epoch> total_wamup_steps and epoch <= total_wamup_steps + 2: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                        if( (epoch - total_wamup_steps - 1) % validate_every >= 0 ) and  (  (epoch - total_wamup_steps - 1 ) % validate_every <= 2):
                             with torch.no_grad():
                                 block = z.detach().clone().double()
 
@@ -492,7 +494,7 @@ for seed in args.seeds:
                                 c_matrix[diagIndices] = 0
                                 # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated =1.0* (np.linalg.norm(c_matrix, 1,
+                                gamma_estimated = 1.0 * (np.linalg.norm(c_matrix, 1,
                                                                   axis=0).sum() / args.bs) * args.beta
                                 print("before gardient ration: ", gamma_estimated)
                                 gamma_estimated = gamma_estimated * gradient_ratio
@@ -562,7 +564,7 @@ for seed in args.seeds:
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
-                elif epoch <= total_wamup_steps + 2:
+                elif ( (epoch - total_wamup_steps - 1 ) % validate_every >= 0) and ( (epoch - total_wamup_steps - 1 ) % validate_every <= 0) :
                     optimizer.zero_grad()
                     optimizerc.zero_grad()
                     scaler.scale(loss).backward()
