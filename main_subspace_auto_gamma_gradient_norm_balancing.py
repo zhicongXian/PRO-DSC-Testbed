@@ -466,7 +466,7 @@ for seed in args.seeds:
                             density_score = np.mean(1 / r)
 
 
-                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
+                            gamma_estimated = 4*(np.linalg.norm(c_matrix_np, 1,
                                                               axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("before gradient ratio : ", gamma_estimated)
                             print("after gradient ratio : ", gamma_estimated/gradient_ratio)

@@ -451,8 +451,8 @@ for seed in args.seeds:
                                 dist, _ = nbrs.kneighbors(x)
                                 r = dist[:, -1]  # k-th neighbor distance
                                 d = block.shape[1]
-                                print("average density score: ", np.mean(1 / r))
-                                density_score = np.mean(1 / r)
+                                print("average density score: ", 1 /np.mean(r))
+                                density_score = 1 / np.mean(r)
                                 # even older, no fast implementation
                                 # c_matrix = self_representation_ls(block.T)
                                 # c_matrix = block @ (
@@ -479,7 +479,7 @@ for seed in args.seeds:
                                 c_matrix[diagIndices] = 0
                                 # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated = (np.linalg.norm(c_matrix, 1,
+                                gamma_estimated =4* (np.linalg.norm(c_matrix, 1,
                                                                   axis=0).sum() / args.bs) * args.beta
                                 print("before gardient ration: ", gamma_estimated)
                                 print("after gardient ration: ", gamma_estimated/gradient_ratio)
