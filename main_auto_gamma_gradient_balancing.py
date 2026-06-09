@@ -348,12 +348,12 @@ for seed in args.seeds:
 
                 #
                 # # remove the scheduling
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                elif gamma_previous > gamma:
-                    gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
+                # if gamma_previous is None:
+                #     gamma_previous = gamma
+                # elif gamma_previous > gamma:
+                #     gamma = gamma_previous
+                # else:
+                #     gamma_previous = gamma
 
                 gamma_estimated_list = []
                 print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
