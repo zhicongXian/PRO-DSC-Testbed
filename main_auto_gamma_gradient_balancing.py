@@ -689,7 +689,7 @@ for seed in args.seeds:
                     y_np = np.concatenate(y_list, axis=0)
 
                     # estimate the parameter for normalized cut:
-                    if (epoch - total_wamup_steps - 1 ) % validate_every >= 0:
+                    if (epoch - total_wamup_steps - 1 ) % validate_every == 0:
 
                         A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
                         nc = normalized_cut_np(A.detach().cpu().numpy(), y_np)
