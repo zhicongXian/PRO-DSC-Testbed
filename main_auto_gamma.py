@@ -296,7 +296,7 @@ for seed in args.seeds:
                 gamma = np.nanmean(np.array(gamma_estimated_list))
 
 
-                # remove the scheduling
+                # remove the s cheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
                 elif gamma_previous > gamma:

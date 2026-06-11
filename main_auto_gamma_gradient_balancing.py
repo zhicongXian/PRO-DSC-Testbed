@@ -375,6 +375,7 @@ for seed in args.seeds:
     validate_every = 10
     reject_parameter = False
     nc_so_far = np.inf
+    gamma_previous_list_per_epoch = []
     # (epoch - nb_warm_up_steps) % validate_every == 0
     with tqdm(total=args.epo) as progress_bar:
         t_begin = time.time()
@@ -400,14 +401,19 @@ for seed in args.seeds:
                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
 
                 gamma = np.nanmean(np.array(gamma_estimated_list))
+                if isinstance(gamma_previous_list_per_epoch, tuple):
+                    gamma_previous_list_per_epoch = list(*gamma_previous_list_per_epoch)
+
+                gamma_previous_list_per_epoch.append(gamma)
 
                 # remove the scheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
                 elif reject_parameter:
-                    gamma = gamma_previous
-                else:
+                    gamma = gamma_previous_list_per_epoch.pop(0)
                     gamma_previous = gamma
+                else:
+                    gamma = gamma_previous
 
                 gamma_estimated_list = []
 
