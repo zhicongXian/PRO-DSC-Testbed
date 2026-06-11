@@ -6,10 +6,9 @@ from distributed.utils_test import double
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import numpy as np
-import torch
 
 from lambda_utils.lambda_estimate_utils import estimate_lambda_local
-from sklearn.neighbors import NearestNeighbors
+
 
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
@@ -30,63 +29,6 @@ def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
         ))
     ).T  # [np.argsort(p), ::]
 
-def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
-    g = torch.autograd.grad(
-        loss,
-        tensor,
-        retain_graph=True,
-        create_graph=False,
-        allow_unused=True
-    )[0]
-
-    if g is None:
-        return torch.tensor(0.0, device=tensor.device)
-    # print("gradient shape", g.shape)
-    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
-
-
-
-def normalized_cut_torch(W, labels, eps=1e-12):
-    """
-    W: (n,n) torch tensor affinity matrix
-    labels: (n,) integer tensor
-    """
-    degrees = W.sum(dim=1)
-    ncut = torch.tensor(0.0, device=W.device, dtype=W.dtype)
-
-    for c in torch.unique(labels):
-        A = labels == c
-        B = ~A
-
-        cut = W[A][:, B].sum()
-        vol = degrees[A].sum()
-
-        ncut = ncut + cut / (vol + eps)
-
-    return ncut
-
-
-def update_balanced_weights_from_tensor(
-    L_se,
-    L_bd,
-    intermediate_tensor,
-    lambda_se,
-    lambda_bd,
-    momentum=0.9,
-    eps=1e-8
-):
-    g_se = grad_norm_wrt_tensor(L_se, intermediate_tensor)
-    g_bd = grad_norm_wrt_tensor(L_bd, intermediate_tensor)
-
-    g_avg = 0.5 * (g_se + g_bd)
-
-    new_lambda_se = g_avg / (g_se + eps)
-    new_lambda_bd = g_avg / (g_bd + eps)
-
-    lambda_se = momentum * lambda_se + (1 - momentum) * new_lambda_se
-    lambda_bd = momentum * lambda_bd + (1 - momentum) * new_lambda_bd
-
-    return lambda_se.detach(), lambda_bd.detach(), g_se.item(), g_bd.item()
 
 sys.path.append('./')
 
@@ -184,38 +126,10 @@ def parse_list(value):
     return parsed
 
 
-
-def normalized_cut_np(W, labels, eps=1e-12):
-    """
-    W: (n,n) symmetric affinity matrix, nonnegative
-    labels: cluster labels, shape (n,)
-    returns: normalized cut value, smaller is better
-    """
-    W = np.asarray(W, dtype=float)
-    labels = np.asarray(labels)
-    labels = np.squeeze(labels)
-
-
-    degrees = W.sum(axis=1)
-    ncut = 0.0
-
-    for c in np.unique(labels):
-        A = labels == c
-        B = ~A
-
-        cut = W[np.ix_(A, B)].sum()
-        vol = degrees[A].sum()
-
-        ncut += cut / (vol + eps)
-
-    return ncut
-
-
 parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
 # Use like:
 args = parser.parse_args()
-lambda_se = torch.tensor(1.0)
-lambda_bd = torch.tensor(1.0)
+
 datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimagenet','imagenet','imagenetdogs']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
@@ -337,79 +251,61 @@ train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, dr
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
 test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False)
 
+#### construct the model:
 
+model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(device) # input_dim=768
+sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
+quantile_prob = args.quantile_prob
+
+
+#### loss of logdet()
+warmup_criterion = TotalCodingRate(eps=args.eps)
+
+### optimizer
+param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if p.requires_grad]
+param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
+optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
+optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
+scaler = GradScaler()
+
+### warmup iteration setting 
+total_wamup_steps = args.warmup
+warmup_step = 0
+gamma_estimated_list = []
+# calculate the number of steps per epoch:
+candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(device)
+nb_steps_per_epoch = math.ceil(len(clip_features)/args.bs)
+
+result_df = pd.DataFrame()
+gamma = None
+gamma_previous = None
 for seed in args.seeds:
     same_seeds(seed)
     previous_nmi = None
-    #### construct the model:
-
-    model = PRO_DSC(input_dim=clip_features.shape[-1], hidden_dim=args.hidden_dim, z_dim=args.z_dim).to(
-        device)  # input_dim=768
-    sink_layer = SinkhornDistance(args.pieta, max_iter=args.piiter)
-    quantile_prob = args.quantile_prob
-
-    #### loss of logdet()
-    warmup_criterion = TotalCodingRate(eps=args.eps)
-
-    ### optimizer
-    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
-                                                                                   model.subspace.parameters() if
-                                                                                   p.requires_grad]
-    param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
-    optimizer = optim.SGD(param_list, lr=args.lr, momentum=args.momo, weight_decay=args.wd1, nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=args.lr_c, momentum=args.momo, weight_decay=args.wd2, nesterov=False)
-    scaler = GradScaler()
-
-    ### warmup iteration setting
-    total_wamup_steps = args.warmup
-    warmup_step = 0
-    gamma_estimated_list = []
-    # calculate the number of steps per epoch:
-    candidate_quantile = torch.from_numpy(np.zeros_like(clip_labels)).float().to(device)
-    nb_steps_per_epoch = math.ceil(len(clip_features) / args.bs)
-
-    result_df = pd.DataFrame()
-    gamma = None
-    gamma_previous = None
-    gradient_ratio = 1
-    validate_every = 10
-    reject_parameter = False
-    nc_so_far = np.inf
-    # (epoch - nb_warm_up_steps) % validate_every == 0
     with tqdm(total=args.epo) as progress_bar:
         t_begin = time.time()
         for epoch in range(args.epo):
-            # start to freeze layer after warm up:
-            if (epoch - total_wamup_steps -1)% validate_every == 0:
-                for param in param_list:
-                    param.requires_grad = False
-            if (epoch - total_wamup_steps -2)% validate_every == 0:
-                # reactivate the gradient
-                for param in param_list:
-                    param.requires_grad = True
-
             progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(args.epo))
             model.train()
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
-
-            # if (epoch - total_wamup_steps -3 )% validate_every == 0 or gamma is None:
-                # reactivate the gradient
-
             if len(gamma_estimated_list) > 0:
                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
 
+
                 gamma = np.nanmean(np.array(gamma_estimated_list))
+
 
                 # remove the scheduling
                 if gamma_previous is None:
                     gamma_previous = gamma
-                elif reject_parameter:
+                elif gamma_previous > gamma:
                     gamma = gamma_previous
                 else:
                     gamma_previous = gamma
 
                 gamma_estimated_list = []
+                print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
             for step, (x, y, id_num) in enumerate(train_loader):
 
@@ -497,30 +393,21 @@ for seed in args.seeds:
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / args.bs # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / args.bs # r() loss
                         # # here you can add your initial estimates for Z and for C. and subsequently update!
-                        # if epoch> total_wamup_steps and epoch <= total_wamup_steps + 2: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
-                        if( (epoch - total_wamup_steps - 1) % validate_every >= 0 ) and  (  (epoch - total_wamup_steps - 1 ) % validate_every <= 2):
+                        if epoch> total_wamup_steps: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
                             with torch.no_grad():
                                 block = z.detach().clone().double()
 
-                                # G =  block @ block.T
-                                # diagIndices = np.diag_indices(G.shape[0])
-                                #
-                                # P = jnp.linalg.inv(G.detach().cpu().numpy())
+                                G =  block @ block.T
+                                diagIndices = np.diag_indices(G.shape[0])
+
+                                P = jnp.linalg.inv(G.detach().cpu().numpy())
                                 # without excluding the diagonal elements:
 
                                 ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                                approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                                c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                        approx_pseudo)
-                                B = c_matrix
-                                k = 10
-                                x = block.cpu().numpy()
-                                nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
-                                dist, _ = nbrs.kneighbors(x)
-                                r = dist[:, -1]  # k-th neighbor distance
-                                d = block.shape[1]
-                                # print("average density score: ", 1 /np.mean(r))
-                                density_score = 1 / np.mean(r)
+                                # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                                # c_matrix = np.dot(block.detach().cpu().numpy(),
+                                #                         approx_pseudo)
+                                # c_matrix = torch.from_numpy(c_matrix)
                                 # even older, no fast implementation
                                 # c_matrix = self_representation_ls(block.T)
                                 # c_matrix = block @ (
@@ -543,56 +430,45 @@ for seed in args.seeds:
 
                                 #######################################
 
-                                diagIndices = np.diag_indices(c_matrix.shape[0])
-                                c_matrix[diagIndices] = 0
-                                # B = B.T @ W.detach().cpu().numpy()
+                                P = np.array(P)
+                                B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]) )
+                                B[diagIndices] = 0
+                                B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated = 1.0 * (np.linalg.norm(c_matrix, 1,
-                                                                  axis=0).sum() / args.bs) * args.beta
-                                # print("before gardient ration: ", gamma_estimated)
-                                gamma_estimated = gamma_estimated * gradient_ratio
-                                # print("after gardient ration: ", gamma_estimated)
-                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
-                                # print("current approx err: ", approx_err)
-                                # gamma_estimated = gamma_estimated/gradient_ratio
-                                # frobi= np.linalg.norm(B, "fro")
-                                #
-                                # try:
-                                #     l2_norm_b = np.linalg.norm(B, 2)
-                                #     soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
-                                #     print("soft_rank_global", soft_rank_global)
-                                #     gamma_estimated = args.beta * soft_rank_global/4
-                                # # to catch the SVD does not converge error:
-                                # except Exception as e:
-                                #     print(e)
-                                #     try: #  retrial for SVD computation
-                                #         print("add to check numerical instability")
-                                #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                #         print("soft_rank_global", soft_rank_global)
-                                #         gamma_estimated = args.beta * soft_rank_global/4
-                                #     except Exception as e:
-                                #         print(e)
-                                #     gamma_estimated = gamma_previous
+                                frobi= np.linalg.norm(B, "fro")
 
-                                # print("gamma list: ", gamma_estimated_list)
-                                # if isinstance(gamma_estimated, tuple):
-                                #     gamma_estimated_list = [ sum(gamma_estimated_list)/len(gamma_estimated_list)]
+                                try:
+                                    l2_norm_b = np.linalg.norm(B, 2)
+                                    soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)
+                                    print("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global)/2
+                                # to catch the SVD does not converge error:
+                                except Exception as e:
+                                    print(e)
+                                    try: #  retrial for SVD computation
+                                        print("add to check numerical instability")
+                                        l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                        print("soft_rank_global", soft_rank_global)
+                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global)/2
+                                    except Exception as e:
+                                        print(e)
+                                    gamma_estimated = gamma_previous
+
 
                                 gamma_estimated_list.append(gamma_estimated)
                                 print("estimated gamma: ",gamma_estimated)
 
-                        if epoch >= total_wamup_steps+1:
+                        if epoch >= total_wamup_steps+2:
                             M = L.T @ W
                             pairwise_eigenspace_dist = torch.cdist(M, M)
-                            # loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
+                            loss_enforce_same_block = torch.sum(weights * pairwise_eigenspace_dist)/args.bs
                             if gamma is None:
                                 loss = loss_tcr + args.gamma * loss_exp + args.beta * loss_bl
                             else:
 
-                                loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl # + 1e-3*loss_enforce_same_block
+                                loss = loss_tcr + gamma * loss_exp + args.beta * loss_bl + 1e-3*loss_enforce_same_block
                             print(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
                         else:
@@ -602,30 +478,11 @@ for seed in args.seeds:
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
-                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
-                            L_se=loss_exp,
-                            L_bd=loss_bl,
-                            intermediate_tensor=self_coeff,
-                            lambda_se=lambda_se,
-                            lambda_bd=lambda_bd
-                        )
-                        # print("new lambda_bd", g_bd)
-                        # print("new lambda_se", g_se)
-                        # print("ratio: ", (g_bd / g_se))
-                        gradient_ratio = g_bd # / g_se
-                        # gamma_estimated_list = [i / gradient_ratio for i in gamma_estimated_list]
 
                 if epoch <= total_wamup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
-                    scaler.update()
-                elif ( (epoch - total_wamup_steps - 1 ) % validate_every >= 0) and ( (epoch - total_wamup_steps - 1 ) % validate_every <=2 ) :
-                    optimizer.zero_grad()
-                    optimizerc.zero_grad()
-                    scaler.scale(loss).backward()
-                    # scaler.step(optimizer)
-                    scaler.step(optimizerc)
                     scaler.update()
                 else:
                     optimizer.zero_grad()
@@ -660,7 +517,7 @@ for seed in args.seeds:
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo or (epoch - total_wamup_steps - 1 ) % validate_every == 0:
+            if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
                 t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
@@ -681,49 +538,33 @@ for seed in args.seeds:
 
                     y_np = np.concatenate(y_list, axis=0)
 
-                    # estimate the parameter for normalized cut:
-                    if (epoch - total_wamup_steps - 1 ) % validate_every >= 0:
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                                                                                                                                     seed = seed)
+                    writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
-                        A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                        nc = normalized_cut_np(A.detach().cpu().numpy(), y_np)
-                        print("current nc_sofar: ", nc_so_far)
-                        print("current nc: ", nc )
-                        if nc_so_far <nc:
-                            reject_parameter = True
-                        else:
-                            reject_parameter = False
-                            nc_so_far = nc
-
-                        print("REJEKT parameter: ", reject_parameter)
-
-                    else:
-                        acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
-                                                                                                                                         seed = seed)
-                        writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
-
-                        with open('{}/acc.txt'.format(dir_name), 'a') as f:
-                            f.write(
-                                'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
-                                    np.mean(acc_lst), np.max(acc_lst),
-                                    np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
-                        print(
+                    with open('{}/acc.txt'.format(dir_name), 'a') as f:
+                        f.write(
                             'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
-                                    np.mean(acc_lst), np.max(acc_lst),
-                                    np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                    print(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                                np.mean(acc_lst), np.max(acc_lst),
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
 
-                        result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
-                              'gamma_estimated': gamma,
-                              'acc': np.mean(acc_lst),
-                              'nmi': np.mean(nmi_lst),
-                              'ari': np.mean(ari_lst),
-                              'subspace_discovery_err:': np.mean(sde_lst),
-                              'time': t_end-t_begin
-                              }])])
+                    result_df = pd.concat([result_df, pd.DataFrame.from_records(
+                        [{'seq_name': args.data.lower(), 'seed': seed, 'epoch': epoch, 'gamma_default': args.gamma,
+                          'gamma_estimated': gamma,
+                          'acc': np.mean(acc_lst),
+                          'nmi': np.mean(nmi_lst),
+                          'ari': np.mean(ari_lst),
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'time': t_end-t_begin
+                          }])])
 
-                        result_df.to_csv(
-                            '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
+                    result_df.to_csv(
+                        '{}/{}_{}.csv'.format(
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
 
 
 
