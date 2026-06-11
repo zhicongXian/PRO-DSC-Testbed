@@ -410,7 +410,8 @@ for seed in args.seeds:
                 if gamma_previous is None:
                     gamma_previous = gamma
                 elif reject_parameter:
-                    gamma = gamma_previous_list_per_epoch.pop(0)
+                    gamma = np.nanmean(np.array(gamma_previous_list_per_epoch))#gamma_previous_list_per_epoch.pop(0)
+                    gamma_previous_list_per_epoch.pop(0)
                     gamma_previous = gamma
                 else:
                     gamma = gamma_previous
