@@ -619,7 +619,7 @@ for seed in args.seeds:
                         # print("new lambda_bd", g_bd)
                         # print("new lambda_se", g_se)
                         # print("ratio: ", (g_bd / g_se))
-                        gradient_ratio = g_bd / g_se
+                        gradient_ratio = g_bd #  / g_se
                         # gamma_estimated_list = [i / gradient_ratio for i in gamma_estimated_list]
 
                 if epoch <= total_wamup_steps:
