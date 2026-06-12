@@ -554,7 +554,7 @@ for seed in args.seeds:
                                 c_matrix[diagIndices] = 0
                                 # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated = 1.0 * (np.linalg.norm(c_matrix, 1,
+                                gamma_estimated = 4.0 * (np.linalg.norm(c_matrix, 1,
                                                                   axis=0).sum() / args.bs) * args.beta
                                 # print("before gardient ration: ", gamma_estimated)
                                 gamma_estimated = gamma_estimated * gradient_ratio
@@ -695,7 +695,7 @@ for seed in args.seeds:
                         nc = normalized_cut_np(A.detach().cpu().numpy(), y_np)
                         print("current nc_sofar: ", nc_so_far)
                         print("current nc: ", nc )
-                        if nc_so_far <nc:
+                        if nc_so_far <nc and (nc-nc_so_far)/nc_so_far >= 0.01 :
                             reject_parameter = True
                         else:
                             reject_parameter = False
