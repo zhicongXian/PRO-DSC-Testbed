@@ -695,7 +695,7 @@ for seed in args.seeds:
                         nc = normalized_cut_np(A.detach().cpu().numpy(), y_np)
                         print("current nc_sofar: ", nc_so_far)
                         print("current nc: ", nc )
-                        if nc_so_far <nc and (nc-nc_so_far)/nc_so_far >= 0.01 :
+                        if nc_so_far <nc:  # and (nc-nc_so_far)/nc_so_far >= 0.001 :
                             reject_parameter = True
                         else:
                             reject_parameter = False
