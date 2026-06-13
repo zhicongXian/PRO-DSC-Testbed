@@ -414,8 +414,10 @@ for seed in args.seeds:
                     gamma = np.nanmean(np.array(gamma_previous_list_per_epoch))#gamma_previous_list_per_epoch.pop(0)
                     gamma_previous_list_per_epoch.pop(0)
                     gamma_previous = gamma
-                    if gamma < 100:
+                    if gamma < 100 and constant_factor == 1:
                         constant_factor = 4
+                        gamma = gamma_previous
+                        gamma_previous_list_per_epoch = []
                 else:
                     gamma = gamma_previous
 
