@@ -337,6 +337,7 @@ train_loader = DataLoader(clip_feature_set, batch_size=args.bs, shuffle=True, dr
 clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
 test_loader = DataLoader(clip_feature_set_test, batch_size=args.bs, shuffle=True, drop_last=False)
 
+constant_factor = 1
 
 for seed in args.seeds:
     same_seeds(seed)
@@ -413,6 +414,8 @@ for seed in args.seeds:
                     gamma = np.nanmean(np.array(gamma_previous_list_per_epoch))#gamma_previous_list_per_epoch.pop(0)
                     gamma_previous_list_per_epoch.pop(0)
                     gamma_previous = gamma
+                    if gamma < 100:
+                        constant_factor = 4
                 else:
                     gamma = gamma_previous
 
@@ -554,7 +557,7 @@ for seed in args.seeds:
                                 c_matrix[diagIndices] = 0
                                 # B = B.T @ W.detach().cpu().numpy()
                                  # this is especially psueo inverse leads to identity matrices
-                                gamma_estimated = 4.0 * (np.linalg.norm(c_matrix, 1,
+                                gamma_estimated = constant_factor * (np.linalg.norm(c_matrix, 1,
                                                                   axis=0).sum() / args.bs) * args.beta
                                 # print("before gardient ration: ", gamma_estimated)
                                 gamma_estimated = gamma_estimated * gradient_ratio
