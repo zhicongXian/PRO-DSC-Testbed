@@ -313,21 +313,23 @@ test_loader = DataLoader(feature_set_test, batch_size=args.bs, shuffle=True, dro
 #### loss of logdet()
 warmup_criterion = TotalCodingRate(eps=args.eps)
 
-previous_nmi = None
-##-- TODO later for different seeds:
 
-result_df = pd.DataFrame()
-gamma_estimated_list = []
-gamma = None
-gamma_previous = None
-approx_err_list = []
-approx_err_previous = 1
-
-lambda_se = torch.tensor(1.0)
-lambda_bd = torch.tensor(1.0)
 
 gradient_ratio = 1.0
 for seed in args.seeds:
+    previous_nmi = None
+    ##-- TODO later for different seeds:
+
+    result_df = pd.DataFrame()
+    gamma_estimated_list = []
+    gamma = None
+    gamma_previous = None
+    approx_err_list = []
+    approx_err_previous = 1
+
+    lambda_se = torch.tensor(1.0)
+    lambda_bd = torch.tensor(1.0)
+
     same_seeds(seed)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = PRO_DSC(hidden_dim=args.hidden_dim, z_dim=args.z_dim, channels=args.channels, kernels=args.kernels).to(
@@ -466,7 +468,7 @@ for seed in args.seeds:
                             density_score = np.mean(1 / r)
 
 
-                            gamma_estimated = 4*(np.linalg.norm(c_matrix_np, 1,
+                            gamma_estimated = 1*(np.linalg.norm(c_matrix_np, 1,
                                                               axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("before gradient ratio : ", gamma_estimated)
                             print("after gradient ratio : ", gamma_estimated/gradient_ratio)
