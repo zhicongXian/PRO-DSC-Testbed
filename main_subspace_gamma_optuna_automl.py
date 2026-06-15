@@ -219,7 +219,7 @@ def objective( trial : optuna.trial.Trial):
     print("before training configs:", config)
     result_df = pd.DataFrame()
     final_ari = 0
-    early_stopper = EarlyStopper(patience=20, min_delta=0.01)
+    early_stopper = EarlyStopper(patience=20, min_delta=0.005)
     si_score = None
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()

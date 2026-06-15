@@ -354,9 +354,7 @@ def objective( trial : optuna.trial.Trial):
                     )
                 warmup_step += 1
             progress_bar.update(1)
-            if early_stopper.early_stop(np.mean(loss_per_epoch)):
-                print("Early Stopping")
-                break
+
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -368,7 +366,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs or early_stopper.early_stop(np.mean(loss_per_epoch)):
                 t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
@@ -426,8 +424,9 @@ def objective( trial : optuna.trial.Trial):
                         '{}/{}_{}.csv'.format(
                             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
 
-
-
+                    if early_stopper.early_stop(np.mean(loss_per_epoch)):
+                        print("Early Stopping")
+                        break
                     ######## add early stop ######################
                     # early_stopper = EarlyStopper(patience=5)
                     # if early_stopper.early_stop(-np.mean(ari_lst)):
