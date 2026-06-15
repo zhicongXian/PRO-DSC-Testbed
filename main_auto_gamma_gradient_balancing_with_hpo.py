@@ -437,7 +437,7 @@ def init_trial(config, device, train_loader, test_loader):
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
                                 logger.debug(f"current approx err: , {approx_err}")
-                                if math.sqrt(approx_err) < 0.3:
+                                if math.sqrt(approx_err) < 0.6:
                                     gamma_estimated = gamma_estimated * gradient_ratio
                                     gamma_estimated_list.append(gamma_estimated)
                                 else:
