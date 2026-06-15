@@ -540,7 +540,7 @@ def objective( trial : optuna.trial.Trial):
 
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
-    early_stopper = EarlyStopper(patience=20, min_delta=0.005)
+    early_stopper = EarlyStopper(patience=100, min_delta=0.001)
     early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
