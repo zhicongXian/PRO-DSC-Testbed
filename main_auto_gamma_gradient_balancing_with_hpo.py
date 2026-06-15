@@ -499,7 +499,7 @@ def init_trial(config, device, train_loader, test_loader):
 @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
-    config['constant_factor'] = trial.suggest_float("constant_factor", 0.25, 4)
+    config['constant_factor'] = trial.suggest_float("constant_factor", 0.1, 4)
     # config['gamma'] = trial.suggest_float("gamma", 10, 1000)
 
     previous_nmi = None
