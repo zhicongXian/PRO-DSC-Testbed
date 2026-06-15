@@ -40,7 +40,7 @@ import time
 
 import  jax.scipy as jsc
 import  jax.numpy as jnp
-
+import math
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
 optuna.logging.set_verbosity(optuna.logging.INFO)
@@ -373,7 +373,7 @@ def init_trial(config, device, train_loader, test_loader):
     gradient_ratio = 1
     gamma = None
     gamma_previous = None
-    init_epoch = warmup_epochs + 10
+    init_epoch = warmup_epochs + 3
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
     with tqdm(total=init_epoch) as progress_bar:
@@ -456,9 +456,14 @@ def init_trial(config, device, train_loader, test_loader):
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
                                 logger.debug(f"current approx err: , {approx_err}")
-                                gamma_estimated = gamma_estimated / gradient_ratio
-
-                                gamma_estimated_list.append(gamma_estimated)
+                                if math.sqrt(approx_err) < 0.3:
+                                    gamma_estimated = gamma_estimated * gradient_ratio
+                                    gamma_estimated_list.append(gamma_estimated)
+                                else:
+                                    gamma_estimated_list.append(gamma_estimated)
+                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
+                                #
+                                # gamma_estimated_list.append(gamma_estimated)
                                 logger.debug(f"current estimated gamma: {gamma_estimated}")
                         if gamma is None:
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
@@ -479,7 +484,7 @@ def init_trial(config, device, train_loader, test_loader):
                         logger.debug(f"new lambda_bd, {g_bd}")
                         logger.debug(f"new lambda_se {g_se}", )
                         logger.debug(f"ratio: {(g_bd / g_se)}")
-                        gradient_ratio = g_bd / g_se
+                        gradient_ratio = g_bd #/ g_se
 
                 if epoch <= warmup_epochs:
                     optimizer.zero_grad()

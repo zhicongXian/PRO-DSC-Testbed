@@ -7,7 +7,7 @@ from datetime import datetime
 
 current_date = datetime.now()
 formatted_date = current_date.strftime('%m-%d')
-
+import math
 import argparse
 import yaml
 import torch
@@ -284,7 +284,7 @@ def init_trial(config, device, train_loader, test_loader):
     gradient_ratio = 1
     gamma = None
     gamma_previous = None
-    init_epoch = warmup_epochs + 10
+    init_epoch = warmup_epochs + 3
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
     with tqdm(total=init_epoch) as progress_bar:
@@ -367,9 +367,12 @@ def init_trial(config, device, train_loader, test_loader):
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
                                 logger.debug(f"current approx err: , {approx_err}")
-                                gamma_estimated = gamma_estimated / gradient_ratio
-
-                                gamma_estimated_list.append(gamma_estimated)
+                                 #/ gradient_ratio
+                                if math.sqrt(approx_err) < 0.3:
+                                    gamma_estimated = gamma_estimated * gradient_ratio
+                                    gamma_estimated_list.append(gamma_estimated)
+                                else:
+                                    gamma_estimated_list.append(gamma_estimated)
                                 logger.debug(f"current estimated gamma: {gamma_estimated}")
                         if gamma is None:
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
@@ -390,7 +393,7 @@ def init_trial(config, device, train_loader, test_loader):
                         logger.debug(f"new lambda_bd, {g_bd}")
                         logger.debug(f"new lambda_se {g_se}", )
                         logger.debug(f"ratio: {(g_bd / g_se)}")
-                        gradient_ratio = g_bd / g_se
+                        gradient_ratio = g_bd # / g_se
 
                 if epoch <= warmup_epochs:
                     optimizer.zero_grad()
