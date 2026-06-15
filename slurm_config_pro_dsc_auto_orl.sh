@@ -19,6 +19,6 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-# previously l1 norm
-python3 ./main_subspace_auto_gamma_effective_rank.py --data=orl --experiment_name=orl_auto_gamma2 --load_pretrain --seeds=[4,5,6,7,8,9] >> orl_auto_out.txt
+# previously l1 norm main_subspace_auto_gamma_l1_rerun.py
+python3 ./main_subspace_gamma_gradient_balancing_with_hpo.py --data=orl --experiment_name=orl_auto_gamma_new --seeds=[42,1,2,3,4,5,6,7,8,9] >> orl_auto_out.txt
 

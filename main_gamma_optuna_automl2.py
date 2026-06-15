@@ -425,9 +425,9 @@ def objective( trial : optuna.trial.Trial):
 
 
                     ######## add early stop ######################
-                    early_stopper = EarlyStopper(patience=5)
-                    if early_stopper.early_stop(-np.mean(ari_lst)):
-                        break
+                    # early_stopper = EarlyStopper(patience=5)
+                    # if early_stopper.early_stop(-np.mean(ari_lst)):
+                    #     break
 
                     ##############################################
 

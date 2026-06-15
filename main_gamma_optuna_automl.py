@@ -21,7 +21,7 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
 import pandas as pd
 import pickle
 
@@ -278,6 +278,7 @@ def objective( trial : optuna.trial.Trial):
     warmup_step = 0
     result_df = pd.DataFrame()
     final_ari = 0
+    early_stopper = EarlyStopper(patience=20, min_delta=0.01)
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
@@ -285,7 +286,7 @@ def objective( trial : optuna.trial.Trial):
             model.train()
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
-
+            loss_per_epoch = []
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
                 y_np = y.detach().cpu().numpy()
@@ -324,6 +325,7 @@ def objective( trial : optuna.trial.Trial):
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
+                    loss_per_epoch.append(loss.item())
 
                 if epoch <= warmup_epochs:
                     optimizer.zero_grad()
@@ -352,6 +354,9 @@ def objective( trial : optuna.trial.Trial):
                     )
                 warmup_step += 1
             progress_bar.update(1)
+            if early_stopper.early_stop(np.mean(loss_per_epoch)):
+                print("Early Stopping")
+                break
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -385,10 +390,10 @@ def objective( trial : optuna.trial.Trial):
 
                     y_np = np.concatenate(y_list, axis=0)
                     x_np = np.concatenate(x_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
-                                                                                                                                     seed=config['seed'])
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                                                                                                                                     seeds=[config['seed']])
                     # evaluate on the silhouette score:
-                    si_score = silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
+                    si_score = np.mean(np.asarray(si_lst))  #silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
@@ -402,14 +407,20 @@ def objective( trial : optuna.trial.Trial):
                                 np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': args.gamma,
+                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
                           'acc': np.mean(acc_lst),
+                          'acc_std': np.std(acc_lst),
                           'nmi': np.mean(nmi_lst),
+                          'nmi_std': np.std(nmi_lst),
                           'ari': np.mean(ari_lst),
+                          'ari_std': np.std(ari_lst),
                           'subspace_discovery_err:': np.mean(sde_lst),
+                          'subspace_discovery_err_std': np.std(sde_lst),
                           'silhouette_score': si_score,
+                          'silhouette_score_std': np.std(si_lst),
                           'time': t_end - t_begin
-                          }])])
+                          }])]
+                        )
 
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
@@ -418,9 +429,9 @@ def objective( trial : optuna.trial.Trial):
 
 
                     ######## add early stop ######################
-                    early_stopper = EarlyStopper(patience=5)
-                    if early_stopper.early_stop(-np.mean(ari_lst)):
-                        break
+                    # early_stopper = EarlyStopper(patience=5)
+                    # if early_stopper.early_stop(-np.mean(ari_lst)):
+                    #     break
 
                     ##############################################
 
@@ -484,23 +495,23 @@ if __name__ == '__main__':
     #     group=True,
     #     seed=42,
     # )
-    sampler = optuna.samplers.GPSampler(
-        seed=42,
-        n_startup_trials=5,
-    )
 
-    pruner = optuna.pruners.HyperbandPruner()
-    study = optuna.create_study(
-        direction="minimize",
-        sampler=sampler,
-        pruner=pruner,
-    )
     for seed in global_config['seeds']:
         global_config['seed'] = deepcopy(seed)
 
+        sampler = optuna.samplers.GPSampler(
+            seed=seed,
+            n_startup_trials=5,
+        )
 
+        pruner = optuna.pruners.HyperbandPruner()
+        study = optuna.create_study(
+            direction="minimize",
+            sampler=sampler,
+            pruner=pruner,
+        )
         # load results on weights and biases
-        study.optimize(objective, n_trials=5, callbacks=[wandbc])
+        study.optimize(objective, n_trials=5, callbacks=[wandbc], timeout=3600*24)
 
 
         best_run = {

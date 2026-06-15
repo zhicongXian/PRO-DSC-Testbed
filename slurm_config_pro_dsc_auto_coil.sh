@@ -19,5 +19,6 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_auto_gamma_gradient_balancing.py --data=coil100 --load_pretrain --experiment_name=coil100_auto_gamma_gradient_balancing --seeds=[1,2,3,4,5,6,7,8,9]   >> coil100_pretrain_knn_out.txt
+# for the original auto_gamma
+python3 ./main_subspace_gamma_gradient_balancing_with_hpo.py --data=coil100  --experiment_name=coil100_auto_gamma_new --seeds=[42,1,2,3,4,5,6,7,8,9]   >> coil100_pretrain_knn_out.txt
 
