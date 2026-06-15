@@ -25,6 +25,7 @@ from utils import *
 from metrics.clustering import spectral_clustering_metrics, \
     spectral_clustering_metrics_with_ari_and_subspace_discovery_error, \
     spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
+from metrics.clustering import *
 import pandas as pd
 import pickle
 
@@ -118,30 +119,7 @@ parser.add_argument('--input_dim', type=int, default=768,
 parser.add_argument('--constant_factor', type=float, default=1.0,
                     help='pro dsc input dim')
 
-def normalized_cut_np(W, labels, eps=1e-12):
-    """
-    W: (n,n) symmetric affinity matrix, nonnegative
-    labels: cluster labels, shape (n,)
-    returns: normalized cut value, smaller is better
-    """
-    W = np.asarray(W, dtype=float)
-    labels = np.asarray(labels)
-    labels = np.squeeze(labels)
 
-
-    degrees = W.sum(axis=1)
-    ncut = 0.0
-
-    for c in np.unique(labels):
-        A = labels == c
-        B = ~A
-
-        cut = W[np.ix_(A, B)].sum()
-        vol = degrees[A].sum()
-
-        ncut += cut / (vol + eps)
-
-    return ncut
 def parse_list(value):
     try:
         parsed = json.loads(value)
@@ -535,7 +513,7 @@ def objective( trial : optuna.trial.Trial):
     writer = init_pipeline_with_config(dir_name, config)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    gamma = init_trial(config, device, train_loader, test_loader)
+    # gamma = init_trial(config, device, train_loader, test_loader)
     model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(device) # input_dim=768
     sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
 
@@ -554,11 +532,14 @@ def objective( trial : optuna.trial.Trial):
     warmup_step = 0
     result_df = pd.DataFrame()
     final_ari = 0
+
     gamma_estimated_list = []
     gradient_ratio = 1
-    # gamma = None
-    # gamma_previous = None
+    gamma = None
+    gamma_previous = None
 
+    lambda_se = torch.tensor(1.0)
+    lambda_bd = torch.tensor(1.0)
     early_stopper = EarlyStopper(patience=20, min_delta=0.005)
     early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
@@ -646,6 +627,37 @@ def objective( trial : optuna.trial.Trial):
                         #
                         #         gamma_estimated_list.append(gamma_estimated)
                         #         logger.debug(f"current estimated gamma: {gamma_estimated}")
+                        if warmup_epochs < epoch <= warmup_epochs + 3:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                            with torch.no_grad():
+                                block = z.detach().clone().double()
+                                ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+                                approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                                c_matrix = np.dot(block.detach().cpu().numpy(),
+                                                  approx_pseudo)
+                                #######################################
+
+                                diagIndices = np.diag_indices(c_matrix.shape[0])
+                                c_matrix[diagIndices] = 0
+
+                                # this is especially psueo inverse leads to identity matrices
+                                logger.debug(f"constant factor is: {config['constant_factor']}")
+                                gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
+                                                                                              axis=0).sum() / args.bs) * args.beta
+                                logger.debug(f"before gardient ration: {gamma_estimated}")
+                                logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
+                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+
+                                logger.debug(f"current approx err: , {approx_err}")
+                                if math.sqrt(approx_err) < 0.3:
+                                    gamma_estimated = gamma_estimated * gradient_ratio
+                                    gamma_estimated_list.append(gamma_estimated)
+                                else:
+                                    gamma_estimated_list.append(gamma_estimated)
+                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
+                                #
+                                # gamma_estimated_list.append(gamma_estimated)
+                                logger.debug(f"current estimated gamma: {gamma_estimated}")
                         if gamma is None:
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
                         else:
@@ -655,6 +667,17 @@ def objective( trial : optuna.trial.Trial):
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
+                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+                            L_se=loss_exp,
+                            L_bd=loss_bl,
+                            intermediate_tensor=self_coeff,
+                            lambda_se=lambda_se,
+                            lambda_bd=lambda_bd
+                        )
+                        logger.debug(f"new lambda_bd, {g_bd}")
+                        logger.debug(f"new lambda_se {g_se}", )
+                        logger.debug(f"ratio: {(g_bd / g_se)}")
+                        gradient_ratio = g_bd  # / g_se
                     loss_per_epoch.append(loss.item())
 
 
@@ -724,13 +747,13 @@ def objective( trial : optuna.trial.Trial):
 
                     y_np = np.concatenate(y_list, axis=0)
                     x_np = np.concatenate(x_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list, nc_list = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds_nc(x_np, self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
                                                                                                                                     seeds=[config['seed']])
                     # evaluate on the silhouette score:
                     # si_score = silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
 
                     # A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                    # nc = normalized_cut_np(A.detach().cpu().numpy(), y_np)
+                    nc = np.mean(nc_list)#normalized_cut_np(A.detach().cpu().numpy(), y_np)
 
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
@@ -740,9 +763,9 @@ def objective( trial : optuna.trial.Trial):
                                 np.mean(acc_lst), np.max(acc_lst),
                                 np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), np.mean(si_list), np.max(si_list), epoch))
                     logger.info(
-                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}, mean si: {}, max si: {} , epoch {}\n'.format(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}, mean si: {}, max si: {} , mean nc: {}, epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), np.mean(si_list), np.max(si_list), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), np.mean(si_list), np.max(si_list), np.mean(nc_list), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'], 'gamma_estimated':gamma,
@@ -751,6 +774,7 @@ def objective( trial : optuna.trial.Trial):
                           'ari': np.mean(ari_lst),
                           'subspace_discovery_err:': np.mean(sde_lst),
                           'silhouette_score': np.mean(si_list),
+                          'normalized_cut': np.mean(nc_list),
                           'time': t_end - t_begin
                           }])])
 
@@ -800,7 +824,7 @@ def objective( trial : optuna.trial.Trial):
                             f"Current loss: {np.mean(loss_per_epoch)}, best minimum loss so far: {early_stopper.min_validation_loss} "
                             f"with waiting patience {early_stopper.counter}")
 
-    return -np.mean(si_list) # si_score
+    return nc #-np.mean(si_list) # si_score
 
 
 
