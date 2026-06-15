@@ -508,7 +508,8 @@ def init_trial(config, device, train_loader, test_loader):
                     )
                 warmup_step += 1
             progress_bar.update(1)
-
+    if gamma >1000:
+        gamma = 1000
     return gamma
 
 
