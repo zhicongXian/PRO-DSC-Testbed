@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=OpAutoCIFAR10
+#SBATCH --job-name=pro_dsc_optuna_cifar10
 #SBATCH --output=cifar10_auto_gamma.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

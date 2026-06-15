@@ -221,6 +221,7 @@ def objective( trial : optuna.trial.Trial):
     final_ari = 0
     early_stopper = EarlyStopper(patience=20, min_delta=0.005)
     si_score = None
+    early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
@@ -317,6 +318,10 @@ def objective( trial : optuna.trial.Trial):
                 warmup_step += 1
             progress_bar.update(1)
 
+            if epoch > total_wamup_steps:
+                if early_stopper.early_stop(np.mean(loss_per_epoch)):
+                    early_stop = True
+
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
                     writer.add_scalar(k, np.mean(loss_dict[k]), global_step=epoch)
@@ -327,7 +332,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or early_stopper.early_stop(np.mean(loss_per_epoch)):
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or early_stop:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 t_end = time.time()
@@ -408,8 +413,8 @@ def objective( trial : optuna.trial.Trial):
                             'silhouette_score': si_score,
                         })
                     final_ari = np.mean(ari_lst)
-                    if early_stopper.early_stop(np.mean(loss_per_epoch)):
-                        print("Early Stopping")
+                    if early_stop:
+                        print("Early Stopping Ends...")
                         break
 
     return -si_score

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=PRO_DSC_optuna_si_coil100
+#SBATCH --job-name=pro_dsc_optuna_coil100
 #SBATCH --output=rerun_gamma_sweep_coil100.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=PRO_DSC_optuna_si_mnist
+#SBATCH --job-name=pro_dsc_optuna_mnist
 #SBATCH --output=mnist_optuna.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=PRO_DSC_optuna_si_cifar_10_mcr_round2
+#SBATCH --job-name=pro_dsc_optuna_cifar10_mcr
 #SBATCH --output=cifar10_mcr_optuna2.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

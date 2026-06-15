@@ -278,7 +278,8 @@ def objective( trial : optuna.trial.Trial):
     warmup_step = 0
     result_df = pd.DataFrame()
     final_ari = 0
-    early_stopper = EarlyStopper(patience=20, min_delta=0.01)
+    early_stopper = EarlyStopper(patience=21, min_delta=0.005)
+    early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
@@ -355,6 +356,9 @@ def objective( trial : optuna.trial.Trial):
                 warmup_step += 1
             progress_bar.update(1)
 
+            if epoch > warmup_epochs:
+                if early_stopper.early_stop(np.mean(loss_per_epoch)):
+                    early_stop = True
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -366,7 +370,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs or early_stopper.early_stop(np.mean(loss_per_epoch)):
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs or early_stop:
                 t_end = time.time()
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
@@ -424,9 +428,7 @@ def objective( trial : optuna.trial.Trial):
                         '{}/{}_{}.csv'.format(
                             args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
 
-                    if early_stopper.early_stop(np.mean(loss_per_epoch)):
-                        print("Early Stopping")
-                        break
+
                     ######## add early stop ######################
                     # early_stopper = EarlyStopper(patience=5)
                     # if early_stopper.early_stop(-np.mean(ari_lst)):
@@ -458,6 +460,9 @@ def objective( trial : optuna.trial.Trial):
                             "gamma":config['gamma']
                         })
                     final_ari = np.mean(ari_lst)
+                    if early_stop:
+                        logger.info("Early Stopping Ends...")
+                        break
 
     return -si_score
 

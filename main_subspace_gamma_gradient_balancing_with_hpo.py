@@ -505,7 +505,8 @@ def objective( trial : optuna.trial.Trial):
     logger.debug(f"before training configs: {config}")
     result_df = pd.DataFrame()
     final_ari = 0
-    early_stopper = EarlyStopper(patience=20, min_delta=0.01)
+    early_stopper = EarlyStopper(patience=20, min_delta=0.005)
+    early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
@@ -605,12 +606,7 @@ def objective( trial : optuna.trial.Trial):
 
             if epoch > total_wamup_steps:
                 if early_stopper.early_stop(np.mean(loss_per_epoch)):
-                    logger.info("Early Stopping Ends...")
-                    break
-                else:
-                    logger.debug(
-                        f"Current loss: {np.mean(loss_per_epoch)}, best minimum loss so far: {early_stopper.min_validation_loss} "
-                        f"with waiting patience {early_stopper.counter}")
+                    early_stop = True
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -622,7 +618,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or early_stop:
                 logger.info('EVAL on VALIDATE DATASETS')
                 model.eval()
                 t_end = time.time()
@@ -664,10 +660,10 @@ def objective( trial : optuna.trial.Trial):
                                 np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
                                 np.max(sde_lst), epoch))
                     logger.info(
-                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}, mean si: {}, max si: {}  epoch {}\n'.format(
                             np.mean(acc_lst), np.max(acc_lst),
                             np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
-                            np.max(sde_lst), epoch))
+                            np.max(sde_lst), np.mean(si_list), np.max(si_list), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
@@ -705,6 +701,12 @@ def objective( trial : optuna.trial.Trial):
                         })
                     final_ari = np.mean(ari_lst)
 
+                    if early_stop:
+                        logger.info("Early Stopping Ends...")
+                        break
+
+
+
     return -si_score
 
 # def interface_to_train():
@@ -724,6 +726,7 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.INFO)
     initial_points = [
         {"constant_factor": 1},
+        {"constant_factor": 4},
     ]
 
     for seed in global_config['seeds']:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=AutoMNIST
+#SBATCH --job-name=pro_dsc_mnist_auto_gamma
 #SBATCH --output=mnist_auto_gamma.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=100CIAutoCIFAR
+#SBATCH --job-name=pro_dsc_cifar100_auto_gamma
 #SBATCH --output=cifar100_auto_gamma.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00

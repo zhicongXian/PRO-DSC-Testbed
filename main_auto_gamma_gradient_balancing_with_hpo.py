@@ -553,7 +553,8 @@ def objective( trial : optuna.trial.Trial):
     # gamma = None
     # gamma_previous = None
 
-    early_stopper = EarlyStopper(patience=20, min_delta=0.01)
+    early_stopper = EarlyStopper(patience=20, min_delta=0.005)
+    early_stop = False
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
@@ -680,14 +681,10 @@ def objective( trial : optuna.trial.Trial):
                 warmup_step += 1
             progress_bar.update(1)
             # here consider early stop:
+
             if epoch > warmup_epochs:
                 if early_stopper.early_stop(np.mean(loss_per_epoch)):
-                    logger.info("Early Stopping Ends...")
-                    break
-                else:
-                    logger.debug(
-                        f"Current loss: {np.mean(loss_per_epoch)}, best minimum loss so far: {early_stopper.min_validation_loss} "
-                        f"with waiting patience {early_stopper.counter}")
+                    early_stop = True
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -699,7 +696,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs or early_stop:
                 t_end = time.time()
                 logger.info('EVAL on VALIDATE DATASETS')
                 model.eval()
@@ -788,6 +785,14 @@ def objective( trial : optuna.trial.Trial):
                             "gamma":gamma,
                         })
                     final_ari = np.mean(ari_lst)
+
+                    if early_stop:
+                        logger.info("Early Stopping Ends...")
+                        break
+                    else:
+                        logger.debug(
+                            f"Current loss: {np.mean(loss_per_epoch)}, best minimum loss so far: {early_stopper.min_validation_loss} "
+                            f"with waiting patience {early_stopper.counter}")
 
     return -np.mean(si_list) # si_score
 

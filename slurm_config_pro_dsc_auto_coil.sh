@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=42AutoCoil100
+#SBATCH --job-name=pro_dsc_coil100_auto_gamma
 #SBATCH --output=coil100_pretrain_knn.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
