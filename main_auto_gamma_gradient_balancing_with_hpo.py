@@ -351,10 +351,11 @@ def init_trial(config, device, train_loader, test_loader):
     gradient_ratio = 1
     gamma = None
     gamma_previous = None
-    if config['data'] in ["cifar10"]:
-        init_epoch = warmup_epochs + 3
-    else:
-        init_epoch = warmup_epochs +  100
+    init_epoch = config['epo']
+    # if config['data'] in ["cifar10"]:
+    #     init_epoch = warmup_epochs + 3
+    # else:
+    #     init_epoch = warmup_epochs +  100
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
     with tqdm(total=init_epoch) as progress_bar:
