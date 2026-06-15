@@ -351,7 +351,10 @@ def init_trial(config, device, train_loader, test_loader):
     gradient_ratio = 1
     gamma = None
     gamma_previous = None
-    init_epoch = warmup_epochs + 3
+    if config['data'] in ["cifar10"]:
+        init_epoch = warmup_epochs + 3
+    else:
+        init_epoch = warmup_epochs +  100
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
     with tqdm(total=init_epoch) as progress_bar:
@@ -513,7 +516,7 @@ def objective( trial : optuna.trial.Trial):
     writer = init_pipeline_with_config(dir_name, config)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # gamma = init_trial(config, device, train_loader, test_loader)
+    gamma = init_trial(config, device, train_loader, test_loader)
     model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(device) # input_dim=768
     sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
 
@@ -535,8 +538,8 @@ def objective( trial : optuna.trial.Trial):
 
     gamma_estimated_list = []
     gradient_ratio = 1
-    gamma = None
-    gamma_previous = None
+    # gamma = None
+    # gamma_previous = None
 
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
@@ -550,20 +553,20 @@ def objective( trial : optuna.trial.Trial):
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             loss_per_epoch = []
-            if len(gamma_estimated_list) > 0:
-                gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
-                gamma = np.nanmean(np.array(gamma_estimated_list))
-
-                # # remove the scheduling
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                elif gamma_previous < gamma:
-                    gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
-
-                gamma_estimated_list = []
-                logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+            # if len(gamma_estimated_list) > 0:
+            #     gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
+            #     gamma = np.nanmean(np.array(gamma_estimated_list))
+            #
+            #     # # remove the scheduling
+            #     if gamma_previous is None:
+            #         gamma_previous = gamma
+            #     elif gamma_previous < gamma:
+            #         gamma = gamma_previous
+            #     else:
+            #         gamma_previous = gamma
+            #
+            #     gamma_estimated_list = []
+            #     logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -627,37 +630,37 @@ def objective( trial : optuna.trial.Trial):
                         #
                         #         gamma_estimated_list.append(gamma_estimated)
                         #         logger.debug(f"current estimated gamma: {gamma_estimated}")
-                        if warmup_epochs < epoch <= warmup_epochs + 3:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
-                            with torch.no_grad():
-                                block = z.detach().clone().double()
-                                ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                                approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                                c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                  approx_pseudo)
-                                #######################################
-
-                                diagIndices = np.diag_indices(c_matrix.shape[0])
-                                c_matrix[diagIndices] = 0
-
-                                # this is especially psueo inverse leads to identity matrices
-                                logger.debug(f"constant factor is: {config['constant_factor']}")
-                                gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
-                                                                                              axis=0).sum() / args.bs) * args.beta
-                                logger.debug(f"before gardient ration: {gamma_estimated}")
-                                logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
-                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
-
-                                logger.debug(f"current approx err: , {approx_err}")
-                                if math.sqrt(approx_err) < 0.3:
-                                    gamma_estimated = gamma_estimated * gradient_ratio
-                                    gamma_estimated_list.append(gamma_estimated)
-                                else:
-                                    gamma_estimated_list.append(gamma_estimated)
-                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
-                                #
-                                # gamma_estimated_list.append(gamma_estimated)
-                                logger.debug(f"current estimated gamma: {gamma_estimated}")
+                        # if warmup_epochs < epoch <= warmup_epochs + 3:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                        #     with torch.no_grad():
+                        #         block = z.detach().clone().double()
+                        #         ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+                        #         approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                        #         c_matrix = np.dot(block.detach().cpu().numpy(),
+                        #                           approx_pseudo)
+                        #         #######################################
+                        #
+                        #         diagIndices = np.diag_indices(c_matrix.shape[0])
+                        #         c_matrix[diagIndices] = 0
+                        #
+                        #         # this is especially psueo inverse leads to identity matrices
+                        #         logger.debug(f"constant factor is: {config['constant_factor']}")
+                        #         gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
+                        #                                                                       axis=0).sum() / args.bs) * args.beta
+                        #         logger.debug(f"before gardient ration: {gamma_estimated}")
+                        #         logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
+                        #         block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+                        #         approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+                        #
+                        #         logger.debug(f"current approx err: , {approx_err}")
+                        #         if math.sqrt(approx_err) < 0.3:
+                        #             gamma_estimated = gamma_estimated * gradient_ratio
+                        #             gamma_estimated_list.append(gamma_estimated)
+                        #         else:
+                        #             gamma_estimated_list.append(gamma_estimated)
+                        #         # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
+                        #         #
+                        #         # gamma_estimated_list.append(gamma_estimated)
+                        #         logger.debug(f"current estimated gamma: {gamma_estimated}")
                         if gamma is None:
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
                         else:
@@ -667,17 +670,17 @@ def objective( trial : optuna.trial.Trial):
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
-                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
-                            L_se=loss_exp,
-                            L_bd=loss_bl,
-                            intermediate_tensor=self_coeff,
-                            lambda_se=lambda_se,
-                            lambda_bd=lambda_bd
-                        )
-                        logger.debug(f"new lambda_bd, {g_bd}")
-                        logger.debug(f"new lambda_se {g_se}", )
-                        logger.debug(f"ratio: {(g_bd / g_se)}")
-                        gradient_ratio = g_bd  # / g_se
+                        # lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+                        #     L_se=loss_exp,
+                        #     L_bd=loss_bl,
+                        #     intermediate_tensor=self_coeff,
+                        #     lambda_se=lambda_se,
+                        #     lambda_bd=lambda_bd
+                        # )
+                        # logger.debug(f"new lambda_bd, {g_bd}")
+                        # logger.debug(f"new lambda_se {g_se}", )
+                        # logger.debug(f"ratio: {(g_bd / g_se)}")
+                        # gradient_ratio = g_bd  # / g_se
                     loss_per_epoch.append(loss.item())
 
 
