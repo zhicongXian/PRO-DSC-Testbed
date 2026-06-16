@@ -352,10 +352,10 @@ def init_trial(config, device, train_loader, test_loader):
     gamma = None
     gamma_previous = None
     init_epoch = config['epo']
-    # if config['data'] in ["cifar10"]:
-    #     init_epoch = warmup_epochs + 3
-    # else:
-    #     init_epoch = warmup_epochs +  100
+    if config['data'] in ["cifar10"]:
+        init_epoch = warmup_epochs + 3
+    else:
+        init_epoch = warmup_epochs +  100
     lambda_se = torch.tensor(1.0)
     lambda_bd = torch.tensor(1.0)
     with tqdm(total=init_epoch) as progress_bar:
@@ -773,6 +773,7 @@ def objective( trial : optuna.trial.Trial):
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'], 'gamma_estimated':gamma,
+                          'constant_factor': config['constant_factor'],
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
@@ -864,8 +865,8 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.INFO)
     initial_points = [
         {"constant_factor": 1},
-        # {"constant_factor": 0.25},
-        # {"constant_factor": 4},
+        {"constant_factor": 0.25},
+        {"constant_factor": 4},
     ]
 
 
