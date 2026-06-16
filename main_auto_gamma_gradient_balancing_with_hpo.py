@@ -2,6 +2,8 @@ import os
 import sys
 import wandb
 
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
 
 sys.path.append('./')
 
@@ -460,25 +462,45 @@ def init_trial(config, device, train_loader, test_loader):
                                     # logger.debug(f"NEW approx err: , {approx_err}")
 
 
-                                    B = c_matrix
-                                    frobi = np.linalg.norm(B, "fro")
-                                    try:
-                                        l2_norm_b = np.linalg.norm(B, 2)
-                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                        logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']
-                                    # to catch the SVD does not converge error:
-                                    except Exception as e:
-                                        logger.error(e)
-                                        try:  # retrial for SVD computation
-                                            logger.debug("add to check numerical instability")
-                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                            logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                            gamma_estimated = args.beta  * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']#*gradient_ratio
-                                        except Exception as e:
-                                            logger.error(e)
-                                            gamma_estimated = gamma_previous
+                                    k = 10
+                                    x = block.cpu().numpy()
+                                    nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
+                                    dist, _ = nbrs.kneighbors(x)
+                                    # density_score = k /  (r + 1e-12)
+                                    r = dist[:, -1]  # k-th neighbor distance
+                                    d = block.shape[1]
+                                    # logger.debug("average density score: ", np.mean(1 / r))
+                                    # density_score = np.mean(1 / r)
+                                    eps = 1e-12
+
+                                    # remove self-distance at index 0
+                                    distances = dist[:, 1:]
+
+                                    r_k = dist[:, -1] + eps
+
+                                    lid = -k / np.sum(np.log((distances + eps) / r_k[:, None]), axis=1)
+                                    # local_instric_dim = np.mean(lid)
+                                    logger.debug(f"local instric dimensions: {np.mean(lid)}")
+                                    gamma_estimated = config['beta'] * math.sqrt(np.mean(lid)) * config['constant_factor']
+                                    # B = c_matrix
+                                    # frobi = np.linalg.norm(B, "fro")
+                                    # try:
+                                    #     l2_norm_b = np.linalg.norm(B, 2)
+                                    #     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    #     logger.debug(f"soft_rank_global: {soft_rank_global}")
+                                    #     gamma_estimated = args.beta * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']
+                                    # # to catch the SVD does not converge error:
+                                    # except Exception as e:
+                                    #     logger.error(e)
+                                    #     try:  # retrial for SVD computation
+                                    #         logger.debug("add to check numerical instability")
+                                    #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    #         logger.debug(f"soft_rank_global: {soft_rank_global}")
+                                    #         gamma_estimated = args.beta  * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']#*gradient_ratio
+                                    #     except Exception as e:
+                                    #         logger.error(e)
+                                    #         gamma_estimated = gamma_previous
 
                                     gamma_estimated_list.append(gamma_estimated)
                                 else:
