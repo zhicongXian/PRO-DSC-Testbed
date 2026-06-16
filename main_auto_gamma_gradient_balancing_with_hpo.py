@@ -43,7 +43,7 @@ import  jax.scipy as jsc
 import  jax.numpy as jnp
 import math
 
-logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
+logging.basicConfig(level=logging.DEBUG,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
 optuna.logging.set_verbosity(optuna.logging.INFO)
 optuna.logging.enable_propagation()
 optuna.logging.disable_default_handler()
@@ -369,13 +369,13 @@ def init_trial(config, device, train_loader, test_loader):
                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
                 gamma = np.nanmean(np.array(gamma_estimated_list))
 
-                # # remove the scheduling
-                if gamma_previous is None:
-                    gamma_previous = gamma
-                elif gamma_previous < gamma:
-                    gamma = gamma_previous
-                else:
-                    gamma_previous = gamma
+                # # remove the scheduling, because this is just an initial run
+                # if gamma_previous is None:
+                #     gamma_previous = gamma
+                # elif gamma_previous < gamma:
+                #     gamma = gamma_previous
+                # else:
+                #     gamma_previous = gamma
 
                 gamma_estimated_list = []
                 logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
@@ -441,6 +441,46 @@ def init_trial(config, device, train_loader, test_loader):
                                 if math.sqrt(approx_err) < 0.6:
                                     gamma_estimated = gamma_estimated * gradient_ratio
                                     gamma_estimated_list.append(gamma_estimated)
+                                elif gamma_estimated < 10:
+                                    # l1 estimation no longer robust, switch to new methods:
+                                    # block = z.detach().clone().double()
+                                    #
+                                    # G = block @ block.T
+                                    # diagIndices = np.diag_indices(G.shape[0])
+                                    # P = jnp.linalg.inv(G.detach().cpu().numpy())
+                                    #
+                                    # P = np.array(P)
+                                    # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+                                    # B[diagIndices] = 0
+                                    # # B = B.T @ W.detach().cpu().numpy()
+                                    # # this is especially psueo inverse leads to identity matrices
+                                    #
+                                    # block_reconstructed = block @ torch.from_numpy(B).to(device)
+                                    # approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+                                    # logger.debug(f"NEW approx err: , {approx_err}")
+
+
+                                    B = c_matrix
+                                    frobi = np.linalg.norm(B, "fro")
+                                    try:
+                                        l2_norm_b = np.linalg.norm(B, 2)
+                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                        logger.debug(f"soft_rank_global: {soft_rank_global}")
+                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']
+                                    # to catch the SVD does not converge error:
+                                    except Exception as e:
+                                        logger.error(e)
+                                        try:  # retrial for SVD computation
+                                            logger.debug("add to check numerical instability")
+                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                            logger.debug(f"soft_rank_global: {soft_rank_global}")
+                                            gamma_estimated = args.beta  * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']#*gradient_ratio
+                                        except Exception as e:
+                                            logger.error(e)
+                                            gamma_estimated = gamma_previous
+
+                                    gamma_estimated_list.append(gamma_estimated)
                                 else:
                                     gamma_estimated_list.append(gamma_estimated)
                                 # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
@@ -500,7 +540,7 @@ def init_trial(config, device, train_loader, test_loader):
     return gamma
 
 
-@wandbc.track_in_wandb()
+# @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
     config['constant_factor'] = trial.suggest_float("constant_factor", 0.1, 4,log=True)
@@ -889,8 +929,8 @@ if __name__ == '__main__':
         for params in initial_points:
             study.enqueue_trial(params)
         # load results on weights and biases
-        study.optimize(objective, n_trials=5,callbacks=[wandbc], timeout=3600*24) # time out after one day
-
+        study.optimize(objective, n_trials=5, timeout=3600*24) # time out after one day
+        # callbacks=[wandbc],
 
         best_run = {
             "trial_number": study.best_trial.number,

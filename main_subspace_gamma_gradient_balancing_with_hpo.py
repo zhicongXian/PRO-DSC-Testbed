@@ -730,6 +730,7 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.INFO)
     initial_points = [
         {"constant_factor": 1},
+        {"constant_factor": 0.25},
         {"constant_factor": 4},
     ]
 
