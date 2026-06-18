@@ -1021,7 +1021,7 @@ if __name__ == '__main__':
         for params in initial_points:
             study.enqueue_trial(params)
         # load results on weights and biases
-        study.optimize(objective, n_trials=5, timeout=3600*24) # time out after one day
+        study.optimize(objective, n_trials=5) # time out after one day
         # callbacks=[wandbc],
 
         best_run = {
