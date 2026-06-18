@@ -608,7 +608,7 @@ def objective( trial : optuna.trial.Trial):
     scaler = GradScaler()
 
     ### warmup iteration setting
-    parameter_estimate_epos = 10
+    parameter_estimate_epos = 1
     warmup_epochs = config['warmup'] #+ parameter_estimate_epos
     config['epo'] = config['epo'] # + parameter_estimate_epos
     warmup_step = 0
@@ -677,7 +677,7 @@ def objective( trial : optuna.trial.Trial):
                         # smallest to largest:
                         eigvals = np.sort(eigenvals.detach().cpu().numpy())  # ascending
 
-                        gaps = eigvals[1:] - eigvals[:-1]
+                        gaps = eigvals[1:]/eigvals[:-1]#eigvals[1:] - eigvals[:-1] --TODO unknown
                         k_hat = np.argmax(gaps) + 1
 
 
