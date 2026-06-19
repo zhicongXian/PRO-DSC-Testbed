@@ -575,7 +575,30 @@ def init_trial(config, device, train_loader, test_loader):
         gamma = 1000
     return gamma
 
+import numpy as np
 
+def effective_intrinsic_dimension_from_Z(Z, eps=1e-12):
+    """
+    Estimate effective intrinsic dimension from representation matrix Z.
+
+    Z shape: (n_samples, d) or (d, n_samples)
+    """
+    Z = np.asarray(Z)
+
+    # singular values of Z
+    s = np.linalg.svd(Z, compute_uv=False)
+
+    # eigenvalues of Gram matrix Z^T Z are s^2
+    eigvals = s**2
+    eigvals = eigvals[eigvals > eps]
+
+    if len(eigvals) == 0:
+        return 0.0
+
+    # participation-ratio effective rank
+    d_eff = (eigvals.sum() ** 2) / (np.sum(eigvals ** 2) + eps)
+
+    return d_eff
 # @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
@@ -764,32 +787,37 @@ def objective( trial : optuna.trial.Trial):
                                     gamma_estimated_list.append(gamma_estimated)
                                 # not clear when this will satisfy.....
                                 elif gamma_estimated < 10:
-                                    # B = z.T @ z
-                                    # B = B.detach().cpu().numpy().astype(np.float64)
-                                    B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T
-
-
-                                    frobi = np.linalg.norm(B, "fro")
+                                    B = z.T @ z
+                                    B = B.detach().cpu().numpy().astype(np.float64)
+                                    # B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T
+                                    soft_rank_global = effective_intrinsic_dimension_from_Z(B)
+                                    logger.debug(f"soft_rank_global {soft_rank_global}")
                                     logger.debug(f"largest eigenspace gap: {k_hat}")
-                                    try:
-                                        l2_norm_b = np.linalg.norm(B, 2)
-                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                        logger.debug(f"soft_rank_global {soft_rank_global}")
-                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
-                                                          config[
-                                                              'constant_factor']  # to catch the SVD does not converge error:
-                                    except Exception as e:
-                                        logger.error(e)
-                                        try:  # retrial for SVD computation
-                                            logger.info("add to check numerical instability")
-                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                            logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                            gamma_estimated = args.beta * math.sqrt(
-                                                soft_rank_global) / k_hat * config['constant_factor']
-                                        except Exception as e:
-                                            logger.error(e)
-                                            gamma_estimated = gamma_previous
+                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
+                                                      config[
+                                                          'constant_factor']
+
+                                    # frobi = np.linalg.norm(B, "fro")
+                                    # logger.debug(f"largest eigenspace gap: {k_hat}")
+                                    # try:
+                                    #     l2_norm_b = np.linalg.norm(B, 2)
+                                    #     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    #     logger.debug(f"soft_rank_global {soft_rank_global}")
+                                    #     gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
+                                    #                       config[
+                                    #                           'constant_factor']  # to catch the SVD does not converge error:
+                                    # except Exception as e:
+                                    #     logger.error(e)
+                                    #     try:  # retrial for SVD computation
+                                    #         logger.info("add to check numerical instability")
+                                    #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    #         logger.debug(f"soft_rank_global: {soft_rank_global}")
+                                    #         gamma_estimated = args.beta * math.sqrt(
+                                    #             soft_rank_global) / k_hat * config['constant_factor']
+                                    #     except Exception as e:
+                                    #         logger.error(e)
+                                    #         gamma_estimated = gamma_previous
 
                                     gamma_estimated_list.append(gamma_estimated)
 
