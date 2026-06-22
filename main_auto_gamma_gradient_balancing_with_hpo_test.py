@@ -787,10 +787,31 @@ def objective( trial : optuna.trial.Trial):
                                     gamma_estimated_list.append(gamma_estimated)
                                 # not clear when this will satisfy.....
                                 elif gamma_estimated < 10:
-                                    B = z.T @ z
-                                    B = B.detach().cpu().numpy().astype(np.float64)
-                                    # B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T
-                                    soft_rank_global = effective_intrinsic_dimension_from_Z(B)
+                                    # B = z.T @ z
+                                    # B = B.detach().cpu().numpy().astype(np.float64)
+                                    B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T # this is from the minimizing l2 norm. !
+                                    # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+
+                                    frobi = np.linalg.norm(B, "fro")
+
+                                    try:
+                                        l2_norm_b = np.linalg.norm(B, 2)
+                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                        print("soft_rank_global", soft_rank_global)
+                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / args.n_clusters / 2
+                                    # to catch the SVD does not converge error:
+                                    except Exception as e:
+                                        print(e)
+                                        try:  # retrial for SVD computation
+                                            print("add to check numerical instability")
+                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                            print("soft_rank_global", soft_rank_global)
+                                            gamma_estimated = args.beta * math.sqrt(
+                                                soft_rank_global) / args.n_clusters / 2
+                                        except Exception as e:
+                                            print(e)
+
                                     logger.debug(f"soft_rank_global {soft_rank_global}")
                                     logger.debug(f"largest eigenspace gap: {k_hat}")
                                     gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
