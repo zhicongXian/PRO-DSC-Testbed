@@ -781,12 +781,13 @@ def objective( trial : optuna.trial.Trial):
                                 block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
-                                logger.debug(f"current approx err: , {approx_err}")
+                                logger.info(f"current approx err: , {approx_err}")
+                                logger.info(f"initial estimated gamma value: , {gamma_estimated}")
                                 if math.sqrt(approx_err) < 0.6:
                                     gamma_estimated = gamma_estimated * gradient_ratio
                                     gamma_estimated_list.append(gamma_estimated)
                                 # not clear when this will satisfy.....
-                                elif gamma_estimated < 10:
+                                elif gamma_estimated < 10 or gamma_estimated > 1000:
                                     # B = z.T @ z
                                     # B = B.detach().cpu().numpy().astype(np.float64)
                                     B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T # this is from the minimizing l2 norm. !
@@ -798,7 +799,7 @@ def objective( trial : optuna.trial.Trial):
                                         l2_norm_b = np.linalg.norm(B, 2)
                                         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                         print("soft_rank_global", soft_rank_global)
-                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / args.n_clusters / 2
+                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / args.n_clusters
                                     # to catch the SVD does not converge error:
                                     except Exception as e:
                                         print(e)
@@ -808,13 +809,13 @@ def objective( trial : optuna.trial.Trial):
                                             soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                             print("soft_rank_global", soft_rank_global)
                                             gamma_estimated = args.beta * math.sqrt(
-                                                soft_rank_global) / args.n_clusters / 2
+                                                soft_rank_global) / args.n_clusters
                                         except Exception as e:
                                             print(e)
 
                                     logger.debug(f"soft_rank_global {soft_rank_global}")
                                     logger.debug(f"largest eigenspace gap: {k_hat}")
-                                    gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
+                                    gamma_estimated = gamma_estimated * \
                                                       config[
                                                           'constant_factor']
 
