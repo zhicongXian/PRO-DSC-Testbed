@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl.py --data=mnist --experiment_name=mnist_optuna_automl_new >> mnist_optuna_out.txt
+python3 ./main_gamma_optuna_automl.py --data=mnist --experiment_name=mnist_automl_10_trials >> mnist_optuna_out.txt
 

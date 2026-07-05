@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_optuna_automl.py --data=orl --experiment_name=orl_optuna_automl_new --seeds=[42,0,1,2,3,4,5,6,7,8,9] >> rerun_gamma_sweep_orl_out.txt
+python3 ./main_subspace_gamma_optuna_automl.py --data=orl --experiment_name=orl_automl_10_trials --seeds=[42,0,1,2,3,4,5,6,7,8,9] >> rerun_gamma_sweep_orl_out.txt
 

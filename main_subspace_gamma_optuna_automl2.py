@@ -440,7 +440,7 @@ if __name__ == '__main__':
 
 
     # load results on weights and biases
-    study.optimize(objective, n_trials=5, callbacks=[wandbc])
+    study.optimize(objective, n_trials=10, callbacks=[wandbc])
 
 
     best_run = {

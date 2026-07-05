@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl.py --data=cifar10-mcr --experiment_name=optuna_automl_new >> cifar10_mcr_optuna_out2.txt
+python3 ./main_gamma_optuna_automl.py --data=cifar10-mcr --experiment_name=cifar10_mcr_automl_10_trials >> cifar10_mcr_optuna_out2.txt
 
