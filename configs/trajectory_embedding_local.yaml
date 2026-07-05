@@ -1,0 +1,18 @@
+gamma: 164
+beta: 100
+pieta: 0.2
+hidden_dim: 128
+z_dim: 64
+n_clusters: 40
+epo: 5000
+lr: 1.e-4
+eps: 0.1
+data_dir: ./data/datasets/ORL_32x32.mat
+warmup: 1000
+save_every: 5000
+channels: [1, 3, 3, 5]
+kernels: [3, 3, 3]
+seeds: [42, 1,2,3,4,5,6,7,8,9]
+validate_every: 2000
+dropout_rate: 0.1
+root_dir: D:\\Python_code\\oleg_thesis_trajectory_embedding\\trajectory-subspace-clustering\\data\\Hopkins155

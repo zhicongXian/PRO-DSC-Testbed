@@ -74,3 +74,7 @@ optuna_cifar100_auto_gamma.txt
 optuna_cifar100_auto_gamma_out.txt
 cifar10_mcr_optuna2.txt
 cifar10_mcr_optuna_out2.txt
+hopkins155_auto_gamma.txt
+hopkins155_auto_gamma_out.txt
+hopkins155_optuna.txt
+hopkins155_optuna_out.txt

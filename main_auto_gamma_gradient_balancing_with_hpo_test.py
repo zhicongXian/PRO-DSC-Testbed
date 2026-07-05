@@ -813,41 +813,17 @@ def objective( trial : optuna.trial.Trial):
                                         except Exception as e:
                                             print(e)
 
-                                    logger.debug(f"soft_rank_global {soft_rank_global}")
-                                    logger.debug(f"largest eigenspace gap: {k_hat}")
+                                    logger.info(f"soft_rank_global {soft_rank_global}")
+                                    logger.info(f"largest eigenspace gap: {k_hat}")
                                     gamma_estimated = gamma_estimated * \
                                                       config[
                                                           'constant_factor']
-
-                                    # frobi = np.linalg.norm(B, "fro")
-                                    # logger.debug(f"largest eigenspace gap: {k_hat}")
-                                    # try:
-                                    #     l2_norm_b = np.linalg.norm(B, 2)
-                                    #     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    #     logger.debug(f"soft_rank_global {soft_rank_global}")
-                                    #     gamma_estimated = args.beta * math.sqrt(soft_rank_global) / k_hat * \
-                                    #                       config[
-                                    #                           'constant_factor']  # to catch the SVD does not converge error:
-                                    # except Exception as e:
-                                    #     logger.error(e)
-                                    #     try:  # retrial for SVD computation
-                                    #         logger.info("add to check numerical instability")
-                                    #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    #         logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                    #         gamma_estimated = args.beta * math.sqrt(
-                                    #             soft_rank_global) / k_hat * config['constant_factor']
-                                    #     except Exception as e:
-                                    #         logger.error(e)
-                                    #         gamma_estimated = gamma_previous
 
                                     gamma_estimated_list.append(gamma_estimated)
 
                                 else:
                                     gamma_estimated_list.append(gamma_estimated)
-                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
-                                #
-                                # gamma_estimated_list.append(gamma_estimated)
+
                                 logger.debug(f"current estimated gamma: {gamma_estimated}")
                         # update the loss:
                         if gamma is None :
