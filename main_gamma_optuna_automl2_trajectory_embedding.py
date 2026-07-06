@@ -577,7 +577,10 @@ if __name__ == '__main__':
 
         with open('data/datasets/trajectory_embedding_labels_unsupervised', 'rb') as f:
             label_dict = pickle.load(f)
-        for seq_name in data_dict.keys():
+
+
+        start_point_idx = list(data_dict.keys()).index("2T3RTCR_g23")
+        for seq_name in list(data_dict.keys())[start_point_idx + 1:]:
             global_config['seq_name'] = seq_name
             initial_points = [
                 {"constant_factor": 0.707},
