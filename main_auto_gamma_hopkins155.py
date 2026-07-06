@@ -776,6 +776,8 @@ if __name__ == '__main__':
         # get index of 2T3RTCR_g23
         start_point_idx = list(data_dict.keys()).index("2T3RTCR_g23")
         for seq_name in list(data_dict.keys())[start_point_idx + 1:] :
+            if seq_name.lower() == "readme.txt":
+                continue
             global_config['seq_name'] = seq_name
             initial_points = [
                 {"constant_factor": 1.0},
