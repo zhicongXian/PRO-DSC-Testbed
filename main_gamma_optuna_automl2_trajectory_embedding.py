@@ -476,7 +476,7 @@ def make_objective(seq_name):
                                     np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
 
                         result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                            [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
+                            [{'seq_name': seq_name, 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
                               'acc': np.mean(acc_lst),
                               'acc_std': np.std(acc_lst),
                               'nmi': np.mean(nmi_lst),
@@ -493,7 +493,7 @@ def make_objective(seq_name):
 
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
 
 
                         ######## add early stop ######################
