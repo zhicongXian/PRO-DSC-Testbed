@@ -20,5 +20,5 @@ export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
 # old main_auto_gamma
-python3 ./main_auto_gamma_gradient_balancing_with_hpo.py --data=mnist  --experiment_name=mnist_auto_gamma_new   >> mnist_auto_gamma_out.txt
+python3 ./main_auto_gamma_with_hpo_final.py --data=mnist  --experiment_name=mnist_auto_gamma_with_optuna   >> mnist_auto_gamma_out.txt
 

@@ -602,7 +602,7 @@ def effective_intrinsic_dimension_from_Z(Z, eps=1e-12):
 # @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
-    config['constant_factor'] = trial.suggest_float("constant_factor", 0.1, 4,log=True)
+    config['constant_factor'] = trial.suggest_float("constant_factor", 0.1, 8,log=True)
     # config['gamma'] = trial.suggest_float("gamma", 10, 1000)
 
     previous_nmi = None
@@ -761,70 +761,93 @@ def objective( trial : optuna.trial.Trial):
 
                         # add here the estimation
                         if warmup_epochs < epoch <= warmup_epochs + parameter_estimate_epos:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                            # with torch.no_grad():
+                            block = z.detach().clone().double()
+                            ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            c_matrix = np.dot(block.detach().cpu().numpy(),
+                                              approx_pseudo)
+                            #######################################
+
+                            diagIndices = np.diag_indices(c_matrix.shape[0])
+                            c_matrix[diagIndices] = 0
+
+                            # this is especially psueo inverse leads to identity matrices
+                            logger.debug(f"constant factor is: {config['constant_factor']}")
+                            gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
+                                                                                          axis=0).sum() / args.bs) * args.beta
+
+                            ##################### here calculate the new gradient #########################
+                            estimated_c = torch.tensor(c_matrix, requires_grad=True).double()
+                            estimated_c = estimated_c - torch.diag(
+                                torch.diag(estimated_c))  # here he also does this!
+
+                            ### compute the affinity matrix
+                            A_c = 0.5 * (estimated_c.abs() + estimated_c.abs().T)
+
+                            ### compute W for BDR
+                            L_c = torch.diag(A_c.sum(1)) - A_c
                             with torch.no_grad():
-                                block = z.detach().clone().double()
-                                ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                                approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                                c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                  approx_pseudo)
-                                #######################################
+                                _, U_c = torch.linalg.eigh(L_c)
+                                U_c_hat = U_c[:, :config['n_clusters']]
+                                W_c = U_c_hat @ U_c_hat.T
 
-                                diagIndices = np.diag_indices(c_matrix.shape[0])
-                                c_matrix[diagIndices] = 0
+                            loss_bl_c = torch.trace(L_c.T @ W_c) / config['bs']
+                            g_bd_c = grad_norm_wrt_tensor(loss_bl_c, estimated_c)
 
-                                # this is especially psueo inverse leads to identity matrices
-                                logger.debug(f"constant factor is: {config['constant_factor']}")
-                                gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
-                                                                                              axis=0).sum() / args.bs) * args.beta
-                                logger.debug(f"before gardient ration: {gamma_estimated}")
-                                logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
-                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+                            logger.debug(f"calculated g_bd from l2 norm solution: {g_bd_c}")
 
-                                logger.info(f"current approx err: , {approx_err}")
-                                logger.info(f"initial estimated gamma value: , {gamma_estimated}")
-                                if math.sqrt(approx_err) < 0.6:
-                                    gamma_estimated = gamma_estimated * gradient_ratio
-                                    gamma_estimated_list.append(gamma_estimated)
-                                # not clear when this will satisfy.....
-                                elif gamma_estimated < 10 or gamma_estimated > 1000:
-                                    # B = z.T @ z
-                                    # B = B.detach().cpu().numpy().astype(np.float64)
-                                    B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T # this is from the minimizing l2 norm. !
-                                    # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+                            logger.debug(f"before gardient ration: {gamma_estimated}")
+                            logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
+                            block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+                            approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
-                                    frobi = np.linalg.norm(B, "fro")
+                            logger.info(f"current approx err: , {approx_err}")
+                            logger.info(f"initial estimated gamma value: , {gamma_estimated}")
 
-                                    try:
-                                        l2_norm_b = np.linalg.norm(B, 2)
+                            if math.sqrt(approx_err) < 0.6:
+                                gamma_estimated = gamma_estimated * g_bd_c  # gradient_ratio
+                                gamma_estimated_list.append(gamma_estimated)
+                            # not clear when this will satisfy.....
+                            elif gamma_estimated < 10 or gamma_estimated > 1000:
+
+                                B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
+                                    len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
+                                # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+
+                                frobi = np.linalg.norm(B, "fro")
+
+                                try:
+                                    l2_norm_b = np.linalg.norm(B, 2)
+                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    print("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
+                                        'n_clusters']
+                                # to catch the SVD does not converge error:
+                                except Exception as e:
+                                    print(e)
+                                    try:  # retrial for SVD computation
+                                        print("add to check numerical instability")
+                                        l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
                                         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
                                         print("soft_rank_global", soft_rank_global)
-                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / args.n_clusters
-                                    # to catch the SVD does not converge error:
+                                        gamma_estimated = config['beta'] * math.sqrt(
+                                            soft_rank_global) / config['n_clusters']
                                     except Exception as e:
                                         print(e)
-                                        try:  # retrial for SVD computation
-                                            print("add to check numerical instability")
-                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                            print("soft_rank_global", soft_rank_global)
-                                            gamma_estimated = args.beta * math.sqrt(
-                                                soft_rank_global) / args.n_clusters
-                                        except Exception as e:
-                                            print(e)
 
-                                    logger.info(f"soft_rank_global {soft_rank_global}")
-                                    logger.info(f"largest eigenspace gap: {k_hat}")
-                                    gamma_estimated = gamma_estimated * \
-                                                      config[
-                                                          'constant_factor']
+                                logger.info(f"soft_rank_global {soft_rank_global}")
 
-                                    gamma_estimated_list.append(gamma_estimated)
+                                gamma_estimated = gamma_estimated * \
+                                                  config[
+                                                      'constant_factor']
 
-                                else:
-                                    gamma_estimated_list.append(gamma_estimated)
+                                gamma_estimated_list.append(gamma_estimated)
 
-                                logger.debug(f"current estimated gamma: {gamma_estimated}")
+                            else:
+                                gamma_estimated_list.append(gamma_estimated)
+
+                            logger.debug(f"current estimated gamma: {gamma_estimated}")
                         # update the loss:
                         if gamma is None :
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
