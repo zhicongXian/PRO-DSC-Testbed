@@ -78,3 +78,5 @@ hopkins155_auto_gamma.txt
 hopkins155_auto_gamma_out.txt
 hopkins155_optuna.txt
 hopkins155_optuna_out.txt
+hopkins155_optuna_10_trials.txt
+hopkins155_optuna_10_trials_out.txt

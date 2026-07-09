@@ -606,7 +606,7 @@ if __name__ == '__main__':
                 study.enqueue_trial(params)
 
             # load results on weights and biases
-            study.optimize(make_objective(seq_name) , n_trials=5, callbacks=[wandbc])
+            study.optimize(make_objective(seq_name) , n_trials=10, callbacks=[wandbc])
             logger.debug(" seed: ", seed, " best param", study.best_params)
             logger.debug(" seed: ", seed, " best values", study.best_value)
 
