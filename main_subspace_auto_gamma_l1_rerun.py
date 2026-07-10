@@ -20,7 +20,7 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace_discovery_error
+from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
 import scipy.io as sio
 import pandas as pd
 
@@ -346,13 +346,14 @@ for seed in args.seeds:
                     logits_list = []
                     z_list = []
                     y_list = []
-
+                    x_list = []
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
                         y_list.append(y.detach().cpu().numpy())
                         z, logits = model(x)
                         logits_list.append(logits)
                         z_list.append(z)
+                        x_list.append(x.detach().cpu().numpy())
 
                     logits = torch.cat(logits_list, dim=0)
                     z = torch.cat(z_list, dim=0)
@@ -361,10 +362,12 @@ for seed in args.seeds:
                     Pi = sink_layer(self_coeff)[0]
                     Pi = Pi * Pi.shape[-1]
                     self_coeff = Pi[0]
-
+                    x_np = np.concatenate(x_list, axis=0)
                     y_np = np.concatenate(y_list, axis=0)
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
-                                                                                                                                     seed = seed)
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(
+                        x_np, self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
+                        seeds=[seed])
+                    # evaluate on the silhouette score:
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
@@ -383,6 +386,7 @@ for seed in args.seeds:
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
+                          'silhouette_score': np.mean(si_lst),
                           'subspace_discovery_err:': np.mean(sde_lst)
                           }])])
 
