@@ -80,3 +80,17 @@ hopkins155_optuna.txt
 hopkins155_optuna_out.txt
 hopkins155_optuna_10_trials.txt
 hopkins155_optuna_10_trials_out.txt
+cifar10_random_automl.txt
+cifar10_random_automl_out.txt
+cifar10_mcr_random_automl.txt
+cifar10_mcr_random_automl_out.txt
+optuna_cifar100_random_automl.txt
+optuna_cifar100_random_automl_out.txt
+hopkins155_random_automl.txt
+hopkins155_random_automl_out.txt
+mnist_random_automl.txt
+mnist_random_automl_out.txt
+pro_dsc_coil100_random_automl.txt
+pro_dsc_coil100_random_automl_out.txt
+pro_dsc_orl_random_automl.txt
+pro_dsc_orl_random_automl_out.txt
