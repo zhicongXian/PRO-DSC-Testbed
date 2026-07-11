@@ -218,9 +218,9 @@ for seed in args.seeds:
                         with torch.no_grad():
                             block = z.detach().clone().double()
 
-                            # approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            # c_matrix = np.dot(block.detach().cpu().numpy(),
-                            #                   approx_pseudo)
+                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                            c_matrix = np.dot(block.detach().cpu().numpy(),
+                                              approx_pseudo)
                             # this does not get from raw features, why the pseudo inverse not identity matrices?
                             # plot the distance measurement
 
