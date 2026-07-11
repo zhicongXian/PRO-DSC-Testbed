@@ -412,7 +412,7 @@ for seed in args.seeds:
                             c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
-                            gamma_estimated = 4*(np.linalg.norm(c_matrix_np, 1,
+                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
                                                               axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("current estimated gamma: ", gamma_estimated)
 
@@ -537,6 +537,6 @@ for seed in args.seeds:
 
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
-                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False)
     del model
     torch.cuda.empty_cache()
