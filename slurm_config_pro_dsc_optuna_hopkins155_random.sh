@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl2_trajectory_embedding_random.py --data=trajectory_embedding --experiment_name=hopkins155_random_automl >> hopkins155_random_automl_out.txt
+python3 ./main_gamma_optuna_automl2_trajectory_embedding_random.py --data=trajectory_embedding --experiment_name=hopkins155_random_automl2 >> hopkins155_random_automl_out.txt
 

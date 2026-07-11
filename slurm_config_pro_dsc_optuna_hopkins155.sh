@@ -19,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl2_trajectory_embedding.py --data=trajectory_embedding --experiment_name=hopkins155_optuna_automl_new >> hopkins155_optuna_out.txt
+python3 ./main_gamma_optuna_automl2_trajectory_embedding.py --data=trajectory_embedding --experiment_name=hopkins155_optuna_automl_new2 >> hopkins155_optuna_out.txt
 

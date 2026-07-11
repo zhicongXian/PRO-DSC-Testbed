@@ -20,5 +20,5 @@ export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
 # old main_auto_gamma
-python3 ./main_auto_gamma_hopkins155.py --data=trajectory_embedding  --experiment_name=hopkins155_auto_gamma_new   >> hopkins155_auto_gamma_out.txt
+python3 ./main_auto_gamma_hopkins155.py --data=trajectory_embedding  --experiment_name=hopkins155_auto_gamma_new2   >> hopkins155_auto_gamma_out.txt
 
