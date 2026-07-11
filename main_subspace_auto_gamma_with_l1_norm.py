@@ -22,7 +22,7 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error
+from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
 import torch.nn.functional as F
 import scipy.io as sio
 from model.DSCNet import PRO_DSC
@@ -412,7 +412,7 @@ for seed in args.seeds:
                             c_matrix_np[diagIndices] = 0
 
                             # when using this, it becomes too small
-                            gamma_estimated = (np.linalg.norm(c_matrix_np, 1,
+                            gamma_estimated = 4*(np.linalg.norm(c_matrix_np, 1,
                                                               axis=0).sum() / args.bs) * args.beta  # torch.trace(L_c.T @ c_W)/args.bs/4 # 1/( 0.25 * 1 / torch.sum(torch.abs(c_matrix)))/len(x) # 1/500*torch.ones([1]).cuda() #
                             print("current estimated gamma: ", gamma_estimated)
 
@@ -486,6 +486,7 @@ for seed in args.seeds:
                     logits_list = []
                     z_list = []
                     y_list = []
+                    x_list = []
 
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
@@ -493,6 +494,7 @@ for seed in args.seeds:
                         z, logits = model(x)
                         logits_list.append(logits)
                         z_list.append(z)
+                        x_list.append(x.detach().cpu().numpy())
 
                     logits = torch.cat(logits_list, dim=0)
                     z = torch.cat(z_list, dim=0)
@@ -503,10 +505,12 @@ for seed in args.seeds:
                     self_coeff = Pi[0]
 
                     y_np = np.concatenate(y_list, axis=0)
+                    x_np = np.concatenate(x_list, axis=0)
+                    x_np = np.reshape(x_np, (len(x_np), -1))
 
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error(
-                        self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
-                        seed=seed)
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(
+                        x_np, self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
+                        seeds=[seed])
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
@@ -527,7 +531,8 @@ for seed in args.seeds:
                           'acc': np.mean(acc_lst),
                           'nmi': np.mean(nmi_lst),
                           'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst)
+                          'subspace_discovery_err:': np.mean(sde_lst),
+                          'silhouette_score': np.mean(si_lst)
                           }])])
 
                     result_df.to_csv(
