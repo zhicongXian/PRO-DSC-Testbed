@@ -493,7 +493,7 @@ def make_objective(seq_name):
 
                         result_df.to_csv(
                             '{}/{}_{}.csv'.format(
-                                args.out_dir, args.data.lower(), args.experiment_name), index=False)
+                                args.out_dir, args.data.lower(), args.experiment_name), index=False, mode="a")
 
 
                         ######## add early stop ######################
@@ -579,7 +579,7 @@ if __name__ == '__main__':
             label_dict = pickle.load(f)
 
 
-        start_point_idx = list(data_dict.keys()).index("2T3RTCR_g23")
+        start_point_idx = 0 # list(data_dict.keys()).index("2T3RTCR_g23")
         for seq_name in list(data_dict.keys())[start_point_idx + 1:]:
             if seq_name.lower() == "readme.txt":
                 continue
