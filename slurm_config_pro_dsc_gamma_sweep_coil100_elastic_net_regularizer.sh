@@ -4,7 +4,7 @@
 #SBATCH --array=0-9
 #SBATCH --output=logs_coil100_gamma_%A_%a.out
 #SBATCH --time=10-00:00:00
-#SBATCH --mem=8G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:1
 
 # debug info
