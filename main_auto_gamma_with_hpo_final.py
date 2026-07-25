@@ -341,241 +341,241 @@ def init_pipeline_with_config(model_dir, config):
 
 ######## load the model #####################################
 
-def init_trial(config, device, train_loader, test_loader):
-    model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(
-        device)  # input_dim=768
-    sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
-
-    #### loss of logdet()
-    warmup_criterion = TotalCodingRate(eps=config['eps'])
-
-    ### optimizer
-    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
-                                                                                   model.subspace.parameters() if
-                                                                                   p.requires_grad]
-    param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
-    optimizer = optim.SGD(param_list, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'],
-                          nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=config['lr_c'], momentum=config['momo'], weight_decay=config['wd2'],
-                           nesterov=False)
-    scaler = GradScaler()
-
-    ### warmup iteration setting
-    warmup_epochs = config['warmup']
-    warmup_step = 0
-    result_df = pd.DataFrame()
-    final_ari = 0
-    gamma_estimated_list = []
-    gradient_ratio = 1
-    gamma = None
-    gamma_previous = None
-    init_epoch = config['epo']
-    if config['data'] in ["cifar10"]:
-        init_epoch = warmup_epochs + 3
-    else:
-        init_epoch = warmup_epochs +  100
-    lambda_se = torch.tensor(1.0)
-    lambda_bd = torch.tensor(1.0)
-    with tqdm(total=init_epoch) as progress_bar:
-        t_begin = time.time()
-        for epoch in range(init_epoch):
-            progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(init_epoch))
-            model.train()
-            ### learning loss storage
-            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
-            if len(gamma_estimated_list) > 0:
-                gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
-                gamma = np.nanmean(np.array(gamma_estimated_list))
-
-                # # remove the scheduling, because this is just an initial run
-                # if gamma_previous is None:
-                #     gamma_previous = gamma
-                # elif gamma_previous < gamma:
-                #     gamma = gamma_previous
-                # else:
-                #     gamma_previous = gamma
-
-                gamma_estimated_list = []
-                logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
-
-            for step, (x, y) in enumerate(train_loader):
-                x, y = x.float().to(device), y.to(device)
-                y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
-                    z, logits = model(x)
-                    self_coeff = (logits @ logits.T)
-                    Sign_self_coeff = torch.sign(self_coeff)
-
-                    ### Sinkhorn projection
-                    self_coeff = self_coeff.abs().unsqueeze(0)
-                    Pi = sink_layer(self_coeff)[0]
-                    Pi = Pi * Pi.shape[-1]
-                    self_coeff = Pi[0]
-                    # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))  # here he also does this!
-
-                    ### compute the affinity matrix
-                    A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                    A_np = A.detach().cpu().numpy()
-                    ### compute W for BDR
-                    L = torch.diag(A.sum(1)) - A
-                    with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
-                        U_hat = U[:, :config['n_clusters']]
-                        W = U_hat @ U_hat.T
-
-                    if epoch <= warmup_epochs:
-                        loss = warmup_criterion(z)
-                        loss_dict['loss_TCR'].append(loss.item())
-                    else:
-                        loss_tcr = warmup_criterion(z)  # logdet() loss
-                        loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A))) ** 2 / config[
-                            'bs']  # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / config['bs']  # r() loss
-
-                        # here add the gamma estimations:
-                        if epoch > warmup_epochs:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
-                            with torch.no_grad():
-                                block = z.detach().clone().double()
-                                ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                                approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                                c_matrix = np.dot(block.detach().cpu().numpy(),
-                                                  approx_pseudo)
-                                #######################################
-
-                                diagIndices = np.diag_indices(c_matrix.shape[0])
-                                c_matrix[diagIndices] = 0
-
-                                # this is especially psueo inverse leads to identity matrices
-                                logger.debug(f"constant factor is: {config['constant_factor']}")
-                                gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
-                                                                                              axis=0).sum() / args.bs) * args.beta
-                                logger.debug(f"before gardient ration: {gamma_estimated}")
-                                logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
-                                block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                                approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
-
-                                logger.debug(f"current approx err: , {approx_err}")
-                                if math.sqrt(approx_err) < 0.6:
-                                    gamma_estimated = gamma_estimated * gradient_ratio
-                                    gamma_estimated_list.append(gamma_estimated)
-                                elif gamma_estimated < 10:
-                                    # l1 estimation no longer robust, switch to new methods:
-                                    # block = z.detach().clone().double()
-                                    #
-                                    # G = block @ block.T
-                                    # diagIndices = np.diag_indices(G.shape[0])
-                                    # P = jnp.linalg.inv(G.detach().cpu().numpy())
-                                    #
-                                    # P = np.array(P)
-                                    # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
-                                    # B[diagIndices] = 0
-                                    # # B = B.T @ W.detach().cpu().numpy()
-                                    # # this is especially psueo inverse leads to identity matrices
-                                    #
-                                    # block_reconstructed = block @ torch.from_numpy(B).to(device)
-                                    # approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
-                                    # logger.debug(f"NEW approx err: , {approx_err}")
-
-
-                                    k = 10
-                                    x = block.cpu().numpy()
-                                    nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
-                                    dist, _ = nbrs.kneighbors(x)
-                                    # density_score = k /  (r + 1e-12)
-                                    r = dist[:, -1]  # k-th neighbor distance
-                                    d = block.shape[1]
-                                    # logger.debug("average density score: ", np.mean(1 / r))
-                                    # density_score = np.mean(1 / r)
-                                    eps = 1e-12
-
-                                    # remove self-distance at index 0
-                                    distances = dist[:, 1:]
-
-                                    r_k = dist[:, -1] + eps
-
-                                    lid = -k / np.sum(np.log((distances + eps) / r_k[:, None]), axis=1)
-                                    # local_instric_dim = np.mean(lid)
-                                    logger.debug(f"local instric dimensions: {np.mean(lid)}")
-                                    gamma_estimated = config['beta'] * math.sqrt(np.mean(lid)) * config['constant_factor']
-                                    # B = c_matrix
-                                    # frobi = np.linalg.norm(B, "fro")
-                                    # try:
-                                    #     l2_norm_b = np.linalg.norm(B, 2)
-                                    #     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    #     logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                    #     gamma_estimated = args.beta * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']
-                                    # # to catch the SVD does not converge error:
-                                    # except Exception as e:
-                                    #     logger.error(e)
-                                    #     try:  # retrial for SVD computation
-                                    #         logger.debug("add to check numerical instability")
-                                    #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    #         logger.debug(f"soft_rank_global: {soft_rank_global}")
-                                    #         gamma_estimated = args.beta  * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']#*gradient_ratio
-                                    #     except Exception as e:
-                                    #         logger.error(e)
-                                    #         gamma_estimated = gamma_previous
-
-                                    gamma_estimated_list.append(gamma_estimated)
-                                else:
-                                    gamma_estimated_list.append(gamma_estimated)
-                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
-                                #
-                                # gamma_estimated_list.append(gamma_estimated)
-                                logger.debug(f"current estimated gamma: {gamma_estimated}")
-                        if gamma is None:
-                            loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
-                        else:
-                            loss = loss_tcr + gamma * loss_exp + config['beta'] * loss_bl
-                            logger.debug(f"estimated gamma {gamma}, default gamma is {args.gamma}")
-
-                        loss_dict['loss_TCR'].append(loss_tcr.item())
-                        loss_dict['loss_Exp'].append(loss_exp.item())
-                        loss_dict['loss_Block'].append(loss_bl.item())
-                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
-                            L_se=loss_exp,
-                            L_bd=loss_bl,
-                            intermediate_tensor=self_coeff,
-                            lambda_se=lambda_se,
-                            lambda_bd=lambda_bd
-                        )
-                        logger.debug(f"new lambda_bd, {g_bd}")
-                        logger.debug(f"new lambda_se {g_se}", )
-                        logger.debug(f"ratio: {(g_bd / g_se)}")
-                        gradient_ratio = g_bd #/ g_se
-
-                if epoch <= warmup_epochs:
-                    optimizer.zero_grad()
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.zero_grad()
-                    optimizerc.zero_grad()
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.step(optimizerc)
-                    scaler.update()
-
-                if epoch == warmup_epochs:
-                    logger.info("Warmup Ends...Start training...")
-                    model = update_pi_from_z(model)
-
-                if epoch <= warmup_epochs:
-                    progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
-                else:
-                    progress_bar.set_postfix(
-                        tcr_loss="{:5.4f}".format(loss_tcr.item()),
-                        exp_loss="{:5.4f}".format(loss_exp.item()),
-                        block_loss="{:5.4f}".format(loss_bl.item()),
-                    )
-                warmup_step += 1
-            progress_bar.update(1)
-    if gamma >1000:
-        gamma = 1000
-    return gamma
+# def init_trial(config, device, train_loader, test_loader):
+#     model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(
+#         device)  # input_dim=768
+#     sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
+#
+#     #### loss of logdet()
+#     warmup_criterion = TotalCodingRate(eps=config['eps'])
+#
+#     ### optimizer
+#     param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in
+#                                                                                    model.subspace.parameters() if
+#                                                                                    p.requires_grad]
+#     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
+#     optimizer = optim.SGD(param_list, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'],
+#                           nesterov=False)
+#     optimizerc = optim.SGD(param_list_c, lr=config['lr_c'], momentum=config['momo'], weight_decay=config['wd2'],
+#                            nesterov=False)
+#     scaler = GradScaler()
+#
+#     ### warmup iteration setting
+#     warmup_epochs = config['warmup']
+#     warmup_step = 0
+#     result_df = pd.DataFrame()
+#     final_ari = 0
+#     gamma_estimated_list = []
+#     gradient_ratio = 1
+#     gamma = None
+#     gamma_previous = None
+#     init_epoch = config['epo']
+#     if config['data'] in ["cifar10"]:
+#         init_epoch = warmup_epochs + 3
+#     else:
+#         init_epoch = warmup_epochs +  100
+#     lambda_se = torch.tensor(1.0)
+#     lambda_bd = torch.tensor(1.0)
+#     with tqdm(total=init_epoch) as progress_bar:
+#         t_begin = time.time()
+#         for epoch in range(init_epoch):
+#             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(init_epoch))
+#             model.train()
+#             ### learning loss storage
+#             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
+#             if len(gamma_estimated_list) > 0:
+#                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
+#                 gamma = np.nanmean(np.array(gamma_estimated_list))
+#
+#                 # # remove the scheduling, because this is just an initial run
+#                 # if gamma_previous is None:
+#                 #     gamma_previous = gamma
+#                 # elif gamma_previous < gamma:
+#                 #     gamma = gamma_previous
+#                 # else:
+#                 #     gamma_previous = gamma
+#
+#                 gamma_estimated_list = []
+#                 logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+#
+#             for step, (x, y) in enumerate(train_loader):
+#                 x, y = x.float().to(device), y.to(device)
+#                 y_np = y.detach().cpu().numpy()
+#                 with autocast(enabled=True):
+#                     z, logits = model(x)
+#                     self_coeff = (logits @ logits.T)
+#                     Sign_self_coeff = torch.sign(self_coeff)
+#
+#                     ### Sinkhorn projection
+#                     self_coeff = self_coeff.abs().unsqueeze(0)
+#                     Pi = sink_layer(self_coeff)[0]
+#                     Pi = Pi * Pi.shape[-1]
+#                     self_coeff = Pi[0]
+#                     # eliminate the diagonal value of self_coeff, which fits the constraint of C
+#                     self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))  # here he also does this!
+#
+#                     ### compute the affinity matrix
+#                     A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
+#                     A_np = A.detach().cpu().numpy()
+#                     ### compute W for BDR
+#                     L = torch.diag(A.sum(1)) - A
+#                     with torch.no_grad():
+#                         _, U = torch.linalg.eigh(L)
+#                         U_hat = U[:, :config['n_clusters']]
+#                         W = U_hat @ U_hat.T
+#
+#                     if epoch <= warmup_epochs:
+#                         loss = warmup_criterion(z)
+#                         loss_dict['loss_TCR'].append(loss.item())
+#                     else:
+#                         loss_tcr = warmup_criterion(z)  # logdet() loss
+#                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A))) ** 2 / config[
+#                             'bs']  # ||Z-ZC||_F loss
+#                         loss_bl = torch.trace(L.T @ W) / config['bs']  # r() loss
+#
+#                         # here add the gamma estimations:
+#                         if epoch > warmup_epochs:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+#                             with torch.no_grad():
+#                                 block = z.detach().clone().double()
+#                                 ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+#                                 approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+#                                 c_matrix = np.dot(block.detach().cpu().numpy(),
+#                                                   approx_pseudo)
+#                                 #######################################
+#
+#                                 diagIndices = np.diag_indices(c_matrix.shape[0])
+#                                 c_matrix[diagIndices] = 0
+#
+#                                 # this is especially psueo inverse leads to identity matrices
+#                                 logger.debug(f"constant factor is: {config['constant_factor']}")
+#                                 gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
+#                                                                                               axis=0).sum() / args.bs) * args.beta
+#                                 logger.debug(f"before gardient ration: {gamma_estimated}")
+#                                 logger.debug(f"after gardient ration: , {gamma_estimated / gradient_ratio}")
+#                                 block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+#                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+#
+#                                 logger.debug(f"current approx err: , {approx_err}")
+#                                 if math.sqrt(approx_err) < 0.6:
+#                                     gamma_estimated = gamma_estimated * gradient_ratio
+#                                     gamma_estimated_list.append(gamma_estimated)
+#                                 elif gamma_estimated < 10:
+#                                     # l1 estimation no longer robust, switch to new methods:
+#                                     # block = z.detach().clone().double()
+#                                     #
+#                                     # G = block @ block.T
+#                                     # diagIndices = np.diag_indices(G.shape[0])
+#                                     # P = jnp.linalg.inv(G.detach().cpu().numpy())
+#                                     #
+#                                     # P = np.array(P)
+#                                     # B = P / (-np.diag(P) + 1e-7 * np.eye(G.shape[0]))
+#                                     # B[diagIndices] = 0
+#                                     # # B = B.T @ W.detach().cpu().numpy()
+#                                     # # this is especially psueo inverse leads to identity matrices
+#                                     #
+#                                     # block_reconstructed = block @ torch.from_numpy(B).to(device)
+#                                     # approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+#                                     # logger.debug(f"NEW approx err: , {approx_err}")
+#
+#
+#                                     k = 10
+#                                     x = block.cpu().numpy()
+#                                     nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
+#                                     dist, _ = nbrs.kneighbors(x)
+#                                     # density_score = k /  (r + 1e-12)
+#                                     r = dist[:, -1]  # k-th neighbor distance
+#                                     d = block.shape[1]
+#                                     # logger.debug("average density score: ", np.mean(1 / r))
+#                                     # density_score = np.mean(1 / r)
+#                                     eps = 1e-12
+#
+#                                     # remove self-distance at index 0
+#                                     distances = dist[:, 1:]
+#
+#                                     r_k = dist[:, -1] + eps
+#
+#                                     lid = -k / np.sum(np.log((distances + eps) / r_k[:, None]), axis=1)
+#                                     # local_instric_dim = np.mean(lid)
+#                                     logger.debug(f"local instric dimensions: {np.mean(lid)}")
+#                                     gamma_estimated = config['beta'] * math.sqrt(np.mean(lid)) * config['constant_factor']
+#                                     # B = c_matrix
+#                                     # frobi = np.linalg.norm(B, "fro")
+#                                     # try:
+#                                     #     l2_norm_b = np.linalg.norm(B, 2)
+#                                     #     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+#                                     #     logger.debug(f"soft_rank_global: {soft_rank_global}")
+#                                     #     gamma_estimated = args.beta * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']
+#                                     # # to catch the SVD does not converge error:
+#                                     # except Exception as e:
+#                                     #     logger.error(e)
+#                                     #     try:  # retrial for SVD computation
+#                                     #         logger.debug("add to check numerical instability")
+#                                     #         l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+#                                     #         soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+#                                     #         logger.debug(f"soft_rank_global: {soft_rank_global}")
+#                                     #         gamma_estimated = args.beta  * math.sqrt(soft_rank_global)*config['constant_factor']#/config['n_clusters']#*gradient_ratio
+#                                     #     except Exception as e:
+#                                     #         logger.error(e)
+#                                     #         gamma_estimated = gamma_previous
+#
+#                                     gamma_estimated_list.append(gamma_estimated)
+#                                 else:
+#                                     gamma_estimated_list.append(gamma_estimated)
+#                                 # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
+#                                 #
+#                                 # gamma_estimated_list.append(gamma_estimated)
+#                                 logger.debug(f"current estimated gamma: {gamma_estimated}")
+#                         if gamma is None:
+#                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
+#                         else:
+#                             loss = loss_tcr + gamma * loss_exp + config['beta'] * loss_bl
+#                             logger.debug(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+#
+#                         loss_dict['loss_TCR'].append(loss_tcr.item())
+#                         loss_dict['loss_Exp'].append(loss_exp.item())
+#                         loss_dict['loss_Block'].append(loss_bl.item())
+#                         lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+#                             L_se=loss_exp,
+#                             L_bd=loss_bl,
+#                             intermediate_tensor=self_coeff,
+#                             lambda_se=lambda_se,
+#                             lambda_bd=lambda_bd
+#                         )
+#                         logger.debug(f"new lambda_bd, {g_bd}")
+#                         logger.debug(f"new lambda_se {g_se}", )
+#                         logger.debug(f"ratio: {(g_bd / g_se)}")
+#                         gradient_ratio = g_bd #/ g_se
+#
+#                 if epoch <= warmup_epochs:
+#                     optimizer.zero_grad()
+#                     scaler.scale(loss).backward()
+#                     scaler.step(optimizer)
+#                     scaler.update()
+#                 else:
+#                     optimizer.zero_grad()
+#                     optimizerc.zero_grad()
+#                     scaler.scale(loss).backward()
+#                     scaler.step(optimizer)
+#                     scaler.step(optimizerc)
+#                     scaler.update()
+#
+#                 if epoch == warmup_epochs:
+#                     logger.info("Warmup Ends...Start training...")
+#                     model = update_pi_from_z(model)
+#
+#                 if epoch <= warmup_epochs:
+#                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
+#                 else:
+#                     progress_bar.set_postfix(
+#                         tcr_loss="{:5.4f}".format(loss_tcr.item()),
+#                         exp_loss="{:5.4f}".format(loss_exp.item()),
+#                         block_loss="{:5.4f}".format(loss_bl.item()),
+#                     )
+#                 warmup_step += 1
+#             progress_bar.update(1)
+#     if gamma >1000:
+#         gamma = 1000
+#     return gamma
 
 import numpy as np
 
