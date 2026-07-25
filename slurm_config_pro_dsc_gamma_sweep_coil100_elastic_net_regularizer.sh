@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=pro_dsc_elastic_net_regularizer_gamma_sweep
+#SBATCH --job-name=pro_dsc_elastic_net_regularizer_gamma_sweep_coil100
 #SBATCH --array=0-9
 #SBATCH --output=logs_coil100_gamma_%A_%a.out
 #SBATCH --time=10-00:00:00
