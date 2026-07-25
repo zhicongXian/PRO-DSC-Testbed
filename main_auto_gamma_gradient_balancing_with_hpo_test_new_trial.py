@@ -45,7 +45,7 @@ import  jax.scipy as jsc
 import  jax.numpy as jnp
 import math
 
-logging.basicConfig(level=logging.DEBUG,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
+logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
 optuna.logging.set_verbosity(optuna.logging.INFO)
 optuna.logging.enable_propagation()
 optuna.logging.disable_default_handler()
@@ -284,6 +284,20 @@ def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
         return torch.tensor(0.0, device=tensor.device)
 
     return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
+
+def grad_inf_norm_wrt_tensor(loss, tensor, eps=1e-12):
+    g = torch.autograd.grad(
+        loss,
+        tensor,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )[0]
+
+    if g is None:
+        return torch.tensor(0.0, device=tensor.device)
+
+    return torch.linalg.norm(g.detach(), "inf")#math.sqrt(torch.sum(g.detach() ** 2) + eps)
 
 
 ################################custom model log files #####################
@@ -561,7 +575,30 @@ def init_trial(config, device, train_loader, test_loader):
         gamma = 1000
     return gamma
 
+import numpy as np
 
+def effective_intrinsic_dimension_from_Z(Z, eps=1e-12):
+    """
+    Estimate effective intrinsic dimension from representation matrix Z.
+
+    Z shape: (n_samples, d) or (d, n_samples)
+    """
+    Z = np.asarray(Z)
+
+    # singular values of Z
+    s = np.linalg.svd(Z, compute_uv=False)
+
+    # eigenvalues of Gram matrix Z^T Z are s^2
+    eigvals = s**2
+    eigvals = eigvals[eigvals > eps]
+
+    if len(eigvals) == 0:
+        return 0.0
+
+    # participation-ratio effective rank
+    d_eff = (eigvals.sum() ** 2) / (np.sum(eigvals ** 2) + eps)
+
+    return d_eff
 # @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
@@ -594,7 +631,9 @@ def objective( trial : optuna.trial.Trial):
     scaler = GradScaler()
 
     ### warmup iteration setting
-    warmup_epochs = config['warmup'] + 3
+    parameter_estimate_epos = 1
+    warmup_epochs = config['warmup'] #+ parameter_estimate_epos
+    config['epo'] = config['epo'] # + parameter_estimate_epos
     warmup_step = 0
     result_df = pd.DataFrame()
     final_ari = 0
@@ -616,20 +655,21 @@ def objective( trial : optuna.trial.Trial):
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
             loss_per_epoch = []
-            # if len(gamma_estimated_list) > 0:
-            #     gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
-            #     gamma = np.nanmean(np.array(gamma_estimated_list))
-            #
-            #     # # remove the scheduling
-            #     if gamma_previous is None:
-            #         gamma_previous = gamma
-            #     elif gamma_previous < gamma:
-            #         gamma = gamma_previous
-            #     else:
-            #         gamma_previous = gamma
-            #
-            #     gamma_estimated_list = []
-            #     logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+            k_hat = 1
+            if len(gamma_estimated_list) > 0:
+                gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
+                gamma = np.nanmean(np.array(gamma_estimated_list))
+
+                # # remove the scheduling
+                # if gamma_previous is None:
+                #     gamma_previous = gamma
+                # elif gamma_previous < gamma:
+                #     gamma = gamma_previous
+                # else:
+                #     gamma_previous = gamma
+
+                gamma_estimated_list = []
+                logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
@@ -653,9 +693,16 @@ def objective( trial : optuna.trial.Trial):
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
+                        eigenvals, U = torch.linalg.eigh(L)
                         U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
+
+                        # smallest to largest:
+                        eigvals = np.sort(eigenvals.detach().cpu().numpy())  # ascending
+
+                        gaps = eigvals[1:]/eigvals[:-1]#eigvals[1:] - eigvals[:-1] --TODO unknown
+                        k_hat = np.argmax(gaps) + 1
+
 
                     if epoch <= warmup_epochs:
                         loss = warmup_criterion(z)
@@ -664,6 +711,8 @@ def objective( trial : optuna.trial.Trial):
                         loss_tcr = warmup_criterion(z) # logdet() loss
                         loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / config['bs'] # ||Z-ZC||_F loss
                         loss_bl = torch.trace(L.T @ W) / config['bs'] # r() loss
+
+
 
                         # here add the gamma estimations:
                         # if epoch> warmup_epochs and epoch <= warmup_epochs + 10: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
@@ -693,7 +742,25 @@ def objective( trial : optuna.trial.Trial):
                         #
                         #         gamma_estimated_list.append(gamma_estimated)
                         #         logger.debug(f"current estimated gamma: {gamma_estimated}")
-                        if warmup_epochs  < epoch <= warmup_epochs + 3 :  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+
+
+                        loss_dict['loss_TCR'].append(loss_tcr.item())
+                        loss_dict['loss_Exp'].append(loss_exp.item())
+                        loss_dict['loss_Block'].append(loss_bl.item())
+                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
+                            L_se=loss_exp,
+                            L_bd=loss_bl,
+                            intermediate_tensor=self_coeff,
+                            lambda_se=lambda_se,
+                            lambda_bd=lambda_bd
+                        )
+                        logger.debug(f"new lambda_bd, {g_bd}")
+                        logger.debug(f"new lambda_se {g_se}", )
+                        logger.debug(f"ratio: {(g_bd / g_se)}")
+                        gradient_ratio = g_bd  # / g_se
+
+                        # add here the estimation
+                        if warmup_epochs < epoch <= warmup_epochs + parameter_estimate_epos:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
                             with torch.no_grad():
                                 block = z.detach().clone().double()
                                 ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
@@ -714,52 +781,57 @@ def objective( trial : optuna.trial.Trial):
                                 block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
                                 approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
 
-                                logger.debug(f"current approx err: , {approx_err}")
+                                logger.info(f"current approx err: , {approx_err}")
+                                logger.info(f"initial estimated gamma value: , {gamma_estimated}")
                                 if math.sqrt(approx_err) < 0.6:
                                     gamma_estimated = gamma_estimated * gradient_ratio
                                     gamma_estimated_list.append(gamma_estimated)
-                                elif gamma_estimated < 10:
-                                    k = 10
-                                    x = block.cpu().numpy()
-                                    nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm="auto").fit(x)
-                                    dist, _ = nbrs.kneighbors(x)
-                                    eps = 1e-12
+                                # not clear when this will satisfy.....
+                                elif gamma_estimated < 10 or gamma_estimated > 1000:
+                                    # B = z.T @ z
+                                    # B = B.detach().cpu().numpy().astype(np.float64)
+                                    B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(len(c_matrix)) - c_matrix).T # this is from the minimizing l2 norm. !
+                                    # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
 
-                                    # remove self-distance at index 0
-                                    distances = dist[:, 1:]
+                                    frobi = np.linalg.norm(B, "fro")
 
-                                    r_k = dist[:, -1] + eps
+                                    try:
+                                        l2_norm_b = np.linalg.norm(B, 2)
+                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                        print("soft_rank_global", soft_rank_global)
+                                        gamma_estimated = args.beta * math.sqrt(soft_rank_global) / args.n_clusters
+                                    # to catch the SVD does not converge error:
+                                    except Exception as e:
+                                        print(e)
+                                        try:  # retrial for SVD computation
+                                            print("add to check numerical instability")
+                                            l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                            soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                            print("soft_rank_global", soft_rank_global)
+                                            gamma_estimated = args.beta * math.sqrt(
+                                                soft_rank_global) / args.n_clusters
+                                        except Exception as e:
+                                            print(e)
 
-                                    lid = -k / np.sum(np.log((distances + eps) / r_k[:, None]), axis=1)
-                                    # local_instric_dim = np.mean(lid)
-                                    logger.debug(f"local instric dimensions: {np.mean(lid)}")
-                                    gamma_estimated = config['beta'] * math.sqrt(np.mean(lid)) * config['constant_factor']
+                                    logger.info(f"soft_rank_global {soft_rank_global}")
+                                    logger.info(f"largest eigenspace gap: {k_hat}")
+                                    gamma_estimated = gamma_estimated * \
+                                                      config[
+                                                          'constant_factor']
+
+                                    gamma_estimated_list.append(gamma_estimated)
+
                                 else:
                                     gamma_estimated_list.append(gamma_estimated)
-                                # gamma_estimated = gamma_estimated*gradient_ratio #/ gradient_ratio
-                                #
-                                # gamma_estimated_list.append(gamma_estimated)
+
                                 logger.debug(f"current estimated gamma: {gamma_estimated}")
-                        if gamma is None:
+                        # update the loss:
+                        if gamma is None :
                             loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_bl
                         else:
                             loss = loss_tcr + gamma * loss_exp + config['beta'] * loss_bl
                             logger.debug(f"estimated gamma {gamma}, default gamma is {args.gamma}")
 
-                        loss_dict['loss_TCR'].append(loss_tcr.item())
-                        loss_dict['loss_Exp'].append(loss_exp.item())
-                        loss_dict['loss_Block'].append(loss_bl.item())
-                        lambda_se, lambda_bd, g_se, g_bd = update_balanced_weights_from_tensor(
-                            L_se=loss_exp,
-                            L_bd=loss_bl,
-                            intermediate_tensor=self_coeff,
-                            lambda_se=lambda_se,
-                            lambda_bd=lambda_bd
-                        )
-                        logger.debug(f"new lambda_bd, {g_bd}")
-                        logger.debug(f"new lambda_se {g_se}", )
-                        logger.debug(f"ratio: {(g_bd / g_se)}")
-                        gradient_ratio = g_bd  # / g_se
                     loss_per_epoch.append(loss.item())
 
 
@@ -793,9 +865,17 @@ def objective( trial : optuna.trial.Trial):
             progress_bar.update(1)
             # here consider early stop:
 
-            if epoch > warmup_epochs:
+            # if epoch > warmup_epochs:
+            if early_stopper.early_stop(np.mean(loss_per_epoch)) and epoch < warmup_epochs:
+
+                warmup_epochs = epoch +  1
+                early_stopper = EarlyStopper(patience=100, min_delta=0.001)
+                early_stop = False
+                logger.info(f"early stopping in epoch {epoch} for warmups")
+            elif epoch > warmup_epochs:
                 if early_stopper.early_stop(np.mean(loss_per_epoch)):
                     early_stop = True
+
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -967,7 +1047,7 @@ if __name__ == '__main__':
         for params in initial_points:
             study.enqueue_trial(params)
         # load results on weights and biases
-        study.optimize(objective, n_trials=5, timeout=3600*24) # time out after one day
+        study.optimize(objective, n_trials=10) # time out after one day
         # callbacks=[wandbc],
 
         best_run = {

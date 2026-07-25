@@ -189,6 +189,7 @@ def load_dataset(config):
         feature_dict = torch.load(config['data_dir'])
         clip_features = feature_dict['features'][:50000]
         clip_labels = feature_dict['ys'][:50000]
+        print(f"feature dimension: {clip_features.shape[-1]}")
 
         feature_dict = torch.load(config['data_dir_val'])
         clip_features_test = feature_dict['features'][-10000:]
@@ -209,6 +210,7 @@ def load_dataset(config):
                 clip_labels = full_labels[:50000]
                 clip_labels_test = full_labels[-10000:]
             train_ids = np.arange(len(clip_labels))
+            print(f"feature dimension: {clip_features.shape[-1]}")
     elif config['data'].lower() == 'mnist':
         # downsample = 1280
         # previous_path = 'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'

@@ -309,7 +309,7 @@ def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
         create_graph=False,
         allow_unused=True
     )[0]
-
+    # to do check if the gradient norm positive seme-definite!!
     if g is None:
         return torch.tensor(0.0, device=tensor.device)
 

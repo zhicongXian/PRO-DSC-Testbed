@@ -94,3 +94,4 @@ pro_dsc_coil100_random_automl.txt
 pro_dsc_coil100_random_automl_out.txt
 pro_dsc_orl_random_automl.txt
 pro_dsc_orl_random_automl_out.txt
+logs_*
