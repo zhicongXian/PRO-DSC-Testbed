@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 #SBATCH --job-name=pro_dsc_constant_factor_sweep_mnist
-#SBATCH --array=0-8
+#SBATCH --array=9-10
 #SBATCH --output=logs_mnist_constant_factor_%A_%a.out
 #SBATCH --time=10-00:00:00
 #SBATCH --mem=128G
