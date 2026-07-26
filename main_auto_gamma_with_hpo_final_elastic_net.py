@@ -163,7 +163,7 @@ datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimage
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
-with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+with open(os.path.join('configs','{}_elastic_net.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
         if key == "experiment_name" or key =="seed":

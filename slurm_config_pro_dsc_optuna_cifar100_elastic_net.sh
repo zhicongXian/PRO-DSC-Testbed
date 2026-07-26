@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=pro_dsc_coil100_random_automl_elastic_net
-#SBATCH --output=pro_dsc_coil100_random_automl.txt
+#SBATCH --job-name=pro_dsc_optuna_cifar100_elastic_net
+#SBATCH --output=optuna_cifar100_auto_gamma.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128G
-
 # debug info
 hostname
 which python3
@@ -20,5 +19,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_optuna_automl_random_elastic_net.py --data=coil100 --experiment_name=coil100_random_automl_elastic_net --seeds=[42,0,1,2,3,4,5,6,7,8,9] >> pro_dsc_coil100_random_automl_out.txt
+python3 ./main_gamma_optuna_automl_elastic_net.py --data=cifar100  --experiment_name=cifar100_automl_10_trials_elastic_net   >> optuna_cifar100_auto_gamma_out.txt
 
