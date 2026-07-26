@@ -90,7 +90,7 @@ class EarlyStopper:
         if validation_loss < self.min_validation_loss:
             self.min_validation_loss = validation_loss
             self.counter = 0
-        elif validation_loss > (self.min_validation_loss + self.min_delta) and abs( validation_loss - self.min_validation_loss) / (self.min_validation_loss + 1e-16) < self.min_delta:
+        elif validation_loss >= (self.min_validation_loss) and abs( validation_loss - self.min_validation_loss) / (self.min_validation_loss + 1e-16) < self.min_delta:
             self.counter += 1
             if self.counter >= self.patience:
                 return True
