@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=pro_dsc_constant_factor_sweep_cifar10_mcr
+#SBATCH --job-name=pro_dsc_constant_factor_sweep_cifar100
 #SBATCH --array=0-10
-#SBATCH --output=logs_cifar10_mcr_constant_factor_%A_%a.out
+#SBATCH --output=logs_cifar100_constant_factor_%A_%a.out
 #SBATCH --time=10-00:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
@@ -32,6 +32,6 @@ end_constant_factor="${ends[$SLURM_ARRAY_TASK_ID]}"
 echo "Range: ${start_constant_factor} to ${end_constant_factor}"
 
 
-python3 ./main_auto_gamma_with_hpo_final_constant_factor_sweep.py --data=cifar10-mcr --start_constant_factor=$start_constant_factor \
- --end_constant_factor=$end_constant_factor --experiment_name="wandb_constant_sweep_cifar10_mcr_from{$start_constant_factor}_to{$end_constant_factor}" --seed=0
+python3 ./main_auto_gamma_with_hpo_final_constant_factor_sweep.py --data=cifar100 --start_constant_factor=$start_constant_factor \
+ --end_constant_factor=$end_constant_factor --experiment_name="wandb_constant_sweep_cifar100_from{$start_constant_factor}_to{$end_constant_factor}" --seed=0
 
