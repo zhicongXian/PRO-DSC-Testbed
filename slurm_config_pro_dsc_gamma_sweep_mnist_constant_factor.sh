@@ -4,7 +4,7 @@
 #SBATCH --array=0-10
 #SBATCH --output=logs_mnist_constant_factor_%A_%a.out
 #SBATCH --time=10-00:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:1
 
 # debug info
