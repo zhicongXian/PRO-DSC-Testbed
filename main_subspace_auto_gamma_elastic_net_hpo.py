@@ -114,7 +114,7 @@ datasets_list = ['eyaleb', 'coil100', 'orl']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
-with open(os.path.join('configs', '{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+with open(os.path.join('configs', '{}_elastic_net.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
         if key == "experiment_name" or key == "seed":
@@ -263,6 +263,7 @@ def objective( trial : optuna.trial.Trial):
     early_stop = False
     parameter_estimate_epos = 1
     gamma = None
+    gamma_estimated_list = []
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
