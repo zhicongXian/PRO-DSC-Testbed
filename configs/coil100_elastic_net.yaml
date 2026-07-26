@@ -8,7 +8,7 @@ epo: 2000
 lr: 1.e-4
 eps: 0.05
 data_dir: ./data/datasets/coil100.mat
-warmup: 100
+warmup: 1000
 save_every: 5000
 channels: [1, 50]
 kernels: [5]

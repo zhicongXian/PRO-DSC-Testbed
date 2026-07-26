@@ -239,6 +239,7 @@ def objective( trial : optuna.trial.Trial):
     si_score = None
     early_stop = False
     parameter_estimate_epos = 1
+    gamma_estimated_list = []
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
