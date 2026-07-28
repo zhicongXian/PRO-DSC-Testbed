@@ -21,5 +21,5 @@ export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
 # old one: main_auto_gamma_effective_rank
-python3 ./main_auto_gamma_with_hpo_final_elastic_net.py --data=cifar10-mcr --seeds=[42,0, 1,2,3,4,5,6,7,8,9] --experiment_name=cifar10_mcr_auto_gamma_with_optuna_elastic_net   >> cifar10_mcr_auto_gamma_out.txt
+python3 ./main_auto_gamma_with_hpo_final_elastic_net.py --data=cifar10-mcr  --experiment_name=cifar10_mcr_auto_gamma_with_optuna_elastic_net   >> cifar10_mcr_auto_gamma_out.txt
 
