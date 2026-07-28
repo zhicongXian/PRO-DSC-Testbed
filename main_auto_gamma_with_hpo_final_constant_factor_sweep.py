@@ -93,7 +93,7 @@ parser.add_argument('--end_constant_factor', type=float, default=1,
 
 parser.add_argument('--save_every', type=int, default=50,
                     help='model save every')
-parser.add_argument('--validate_every', type=int, default=25,
+parser.add_argument('--validate_every', type=int, default=2000,
                     help='validate to check the clustering performance')
 
 
@@ -333,7 +333,7 @@ def train(config):
     parameter_estimate_epos = 1
     gamma_estimated_list = []
     estimation_mode= None
-    early_stopper = EarlyStopper(patience=100, min_delta=0.001)
+    early_stopper = EarlyStopper(patience=100, min_delta=0.01)
     early_stop = False
     gamma = None
 

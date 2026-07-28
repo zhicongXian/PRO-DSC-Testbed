@@ -1,5 +1,5 @@
 gamma: 150
-beta: 500
+beta: 600
 pieta: 0.1
 hidden_dim: 4096
 z_dim: 128
@@ -12,6 +12,6 @@ eps: 0.1
 data_dir: ./data/datasets/cifar100_clip_60000.pt
 data_dir_val: ./data/datasets/cifar100_clip_60000.pt
 warmup: 4
-save_every: 25
+save_every: 2000
 input_dim: 768
 seeds: [42,1,2,3,4,5,6,7,8,9]
