@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=pro_dsc_elastic_net_regularizer_gamma_sweep_coil100
+#SBATCH --job-name=pro_dsc_elastic_net_regularizer_auto_gamma_coil100
 #SBATCH --output=coil100_pretrain_knn.txt
 #SBATCH --time=10-00:00:00
 #SBATCH --mem=128G
