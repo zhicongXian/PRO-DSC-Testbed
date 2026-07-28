@@ -21,5 +21,5 @@ export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # train
 
 
-python3 ./main_subspace_auto_gamma_elastic_net_hpo.py --data=coil100 --seeds=[42,0,1,2,3,4,5,6,7,8,9] --experiment_name=auto_gamma_coil100_elastic_net
+python3 ./main_subspace_auto_gamma_elastic_net_hpo.py --data=coil100 --seeds=[42,0,1,2,3,4,5,6,7,8,9] --experiment_name=auto_gamma_coil100_elastic_net2
 

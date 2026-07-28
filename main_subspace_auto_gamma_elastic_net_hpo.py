@@ -450,6 +450,7 @@ def objective( trial : optuna.trial.Trial):
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
+                          'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'acc_std': np.std(acc_lst),
                           'nmi': np.mean(nmi_lst),
@@ -460,7 +461,7 @@ def objective( trial : optuna.trial.Trial):
                           'subspace_discovery_err_std': np.std(sde_lst),
                           'silhouette_score': si_score,
                           'silhouette_score_std': np.std(si_lst),
-                          'time': t_end - t_begin
+                          'time': t_end - t_begin,
                           }])]
                         )
 
@@ -476,7 +477,8 @@ def objective( trial : optuna.trial.Trial):
                             "acc": np.mean(acc_lst),
                             "nmi": np.mean(nmi_lst),
                             "ari": np.mean(ari_lst),
-                            "gamma": config['gamma'],
+                            "gamma_default": config['gamma'],
+                            'gamma_estimated': gamma,
                             "seed": config['seed'],
                             'subspace_discovery_err:': np.mean(sde_lst),
                             'silhouette_score': si_score,
