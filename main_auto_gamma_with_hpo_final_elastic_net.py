@@ -44,6 +44,30 @@ import time
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 import math
+from sklearn.decomposition import PCA
+
+def knn_intrinsic_dimension(X, k=20):
+
+    if k < 3:
+        raise ValueError("k must be at least 3.")
+
+    nn = NearestNeighbors(n_neighbors=k + 1).fit(X)
+    distances, _ = nn.kneighbors(X)
+
+    # Remove distance to the point itself
+    distances = distances[:, 1:]
+
+    r_k = distances[:, [-1]]
+    log_ratios = np.log(r_k / np.maximum(distances[:, :-1], 1e-12))
+
+    local_dimensions = (k - 2) / np.sum(log_ratios, axis=1)
+    logger.info("knn_intrinsic_dimension")
+    return np.median(local_dimensions), local_dimensions
+
+def estimate_intrinsic_dimension(X, variance_threshold=0.95):
+    pca = PCA(n_components=variance_threshold, svd_solver="full")
+    pca.fit(X)
+    return pca.n_components_
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
 optuna.logging.set_verbosity(optuna.logging.INFO)
@@ -715,36 +739,12 @@ def objective( trial : optuna.trial.Trial):
                         ##################### added for criteria check;
                         if gamma_estimated < 20:
                             # stable rank estimation:
-                            B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
-                                len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
-                            # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
-
-                            frobi = np.linalg.norm(B, "fro")
-
-                            try:
-                                l2_norm_b = np.linalg.norm(B, 2)
-                                soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                print("soft_rank_global", soft_rank_global)
-                                gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
-                                    'n_clusters']
-                            # to catch the SVD does not converge error:
-                            except Exception as e:
-                                print(e)
-                                try:  # retrial for SVD computation
-                                    print("add to check numerical instability")
-                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    print("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = config['beta'] * math.sqrt(
-                                        soft_rank_global) / config['n_clusters']
-                                except Exception as e:
-                                    print(e)
-
-                            logger.info(f"soft_rank_global {soft_rank_global}")
+                            gloal_d= estimate_intrinsic_dimension(block.cpu().numpy())
+                            gamma_estimated = math.sqrt(gloal_d)
 
                             gamma_estimated = gamma_estimated * \
                                               config[
-                                                  'constant_factor']
+                                                  'constant_factor']*args.beta
 
 
 
