@@ -712,6 +712,42 @@ def objective( trial : optuna.trial.Trial):
                         logger.debug(f"constant factor is: {config['constant_factor']}")
                         gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
                                                                                       axis=0).sum() / args.bs) * args.beta
+                        ##################### added for criteria check;
+                        if gamma_estimated < 20:
+                            # stable rank estimation:
+                            B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
+                                len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
+                            # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+
+                            frobi = np.linalg.norm(B, "fro")
+
+                            try:
+                                l2_norm_b = np.linalg.norm(B, 2)
+                                soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                print("soft_rank_global", soft_rank_global)
+                                gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
+                                    'n_clusters']
+                            # to catch the SVD does not converge error:
+                            except Exception as e:
+                                print(e)
+                                try:  # retrial for SVD computation
+                                    print("add to check numerical instability")
+                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
+                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                    print("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = config['beta'] * math.sqrt(
+                                        soft_rank_global) / config['n_clusters']
+                                except Exception as e:
+                                    print(e)
+
+                            logger.info(f"soft_rank_global {soft_rank_global}")
+
+                            gamma_estimated = gamma_estimated * \
+                                              config[
+                                                  'constant_factor']
+
+
+
                         gamma_estimated_list.append(gamma_estimated)
 
 

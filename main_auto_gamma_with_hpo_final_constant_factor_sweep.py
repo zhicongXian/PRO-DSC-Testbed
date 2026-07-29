@@ -27,12 +27,13 @@ import pickle
 import logging
 import math
 from sklearn.preprocessing import normalize
+from sklearn.metrics import silhouette_score
 from sklearn.cluster import KMeans
 import  jax.scipy as jsc
 import  jax.numpy as jnp
 
 
-logging.basicConfig(level=logging.ERROR,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
+logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
 
 logger = logging.getLogger("auto_gamma_constant_factor_sweep")
 
@@ -148,6 +149,19 @@ def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
         ))
     ).T  # [np.argsort(p), ::]
 
+def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
+    g = torch.autograd.grad(
+        loss,
+        tensor,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )[0]
+
+    if g is None:
+        return torch.tensor(0.0, device=tensor.device)
+
+    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
 
 def load_dataset(config):
     # Loading features and labels
@@ -220,7 +234,7 @@ def load_dataset(config):
     return train_loader, test_loader
 
 
-def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=1):
+def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=False):
     """
 
     """
@@ -245,7 +259,14 @@ def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=1
         random_state=42
     ).fit_predict(U)
 
-    #
+    #calculate silhouette score
+
+
+    # X: shape (n_samples, n_features)
+    # labels: shape (n_samples,)
+    score = silhouette_score(U, labels, metric="euclidean")
+
+    logger.info(f"Silhouette score: {score:.4f}")
 
     M = (labels[:, None] != labels[None, :]).astype(int)
     squared_norms = np.sum(U ** 2, axis=1, keepdims=True)
@@ -258,7 +279,9 @@ def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=1
     logger.info(f"MIN Estimated mean off-support spectral distance: {(M*D_squared).min()}")
     logger.info(f"MEAN Estimated mean off-support spectral distance: {(M * D_squared).mean()}")
 
-    return 0.5*(M*D_squared).mean()
+
+
+    return 0.5*(M*D_squared).mean(), score
 
 ################################custom model log files #####################
 def init_pipeline_with_config(model_dir, config):
@@ -377,76 +400,96 @@ def train(config):
 
                     ################ now we start gamma estimation ####################
                     if warmup_epochs-parameter_estimate_epos+1 <= epoch < warmup_epochs +1:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
+                        # with torch.no_grad():
+                        block = z.detach().clone().double()
+                        ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
+                        approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
+                        c_matrix = np.dot(block.detach().cpu().numpy(),
+                                          approx_pseudo)
+                        #######################################
+
+                        diagIndices = np.diag_indices(c_matrix.shape[0])
+                        c_matrix[diagIndices] = 0
+
+                        # this is especially psueo inverse leads to identity matrices
+
+                        gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
+                                                                                      axis=0).sum() / args.bs) * args.beta
+                        logger.debug(f"before gardient ration: {gamma_estimated}")
+
+                        block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
+                        approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
+
+                        logger.info(f"current approx err: , {approx_err}")
+                        logger.info(f"initial estimated gamma value: , {gamma_estimated}")
+                        reweighting, si = estimate_mean_off_support_spectral_distance(torch.from_numpy(c_matrix),
+                                                                                  args.n_clusters
+                                                                                  )
+                        ################# calculate gradient ########################
+                        estimated_c = torch.tensor(c_matrix, requires_grad=True).double()
+                        estimated_c = estimated_c - torch.diag(
+                            torch.diag(estimated_c))  # here he also does this!
+
+                        ### compute the affinity matrix
+                        A_c = 0.5 * (estimated_c.abs() + estimated_c.abs().T)
+
+                        ### compute W for BDR
+                        L_c = torch.diag(A_c.sum(1)) - A_c
                         with torch.no_grad():
-                            block = z.detach().clone().double()
-                            ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                            approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                            c_matrix = np.dot(block.detach().cpu().numpy(),
-                                              approx_pseudo)
-                            #######################################
+                            _, U_c = torch.linalg.eigh(L_c)
+                            U_c_hat = U_c[:, :config['n_clusters']]
+                            W_c = U_c_hat @ U_c_hat.T
 
-                            diagIndices = np.diag_indices(c_matrix.shape[0])
-                            c_matrix[diagIndices] = 0
+                        loss_bl_c = torch.trace(L_c.T @ W_c) / config['bs']
+                        g_bd_c = grad_norm_wrt_tensor(loss_bl_c, estimated_c)
+                        logger.info(f"gradient info: {g_bd_c}")
 
-                            # this is especially psueo inverse leads to identity matrices
+                        #############   Further improvement:
 
-                            gamma_estimated = config['constant_factor'] * (np.linalg.norm(c_matrix, 1,
-                                                                                          axis=0).sum() / args.bs) * args.beta
-                            logger.debug(f"before gardient ration: {gamma_estimated}")
-
-                            block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                            approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
-
-                            logger.info(f"current approx err: , {approx_err}")
-                            logger.info(f"initial estimated gamma value: , {gamma_estimated}")
-                            reweighting = estimate_mean_off_support_spectral_distance(torch.from_numpy(c_matrix),
-                                                                                      args.n_clusters
-                                                                                      )
-
-
-                            #############   Further improvement:
-
-                            if math.sqrt(approx_err) < 0.6 and 20 <= gamma_estimated * reweighting < 1000 :
+                        if math.sqrt(approx_err) < 0.6 and ((20 <= gamma_estimated * reweighting < 1000 and si>0.25) or 10 <= gamma_estimated * g_bd_c< 1000):
+                            if si >0.25:
                                 gamma_estimated_list.append(gamma_estimated*reweighting)
-                                estimation_mode="weighted"
-                            elif 10 < gamma_estimated <= 1000:
-                                gamma_estimated_list.append(gamma_estimated)
-                                estimation_mode="l1"
-                            # # not clear when this will satisfy.....
                             else:
-                                estimation_mode="stable_rank"
-                                # use intrinsic dimension estimation:
-                                B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
-                                    len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
-                                # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+                                gamma_estimated_list.append(gamma_estimated * g_bd_c)
+                            estimation_mode="weighted"
+                        elif 10 < gamma_estimated <= 1000:
+                            gamma_estimated_list.append(gamma_estimated)
+                            estimation_mode="l1"
+                        # # not clear when this will satisfy.....
+                        else:
+                            estimation_mode="stable_rank"
+                            # use intrinsic dimension estimation:
+                            B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
+                                len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
+                            # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
 
-                                frobi = np.linalg.norm(B, "fro")
+                            frobi = np.linalg.norm(B, "fro")
 
-                                try:
-                                    l2_norm_b = np.linalg.norm(B, 2)
+                            try:
+                                l2_norm_b = np.linalg.norm(B, 2)
+                                soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
+                                logger.info(f"soft_rank_global {soft_rank_global}")
+                                gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
+                                    'n_clusters']
+                                gamma_estimated_list.append(config['constant_factor'] * gamma_estimated)
+
+                            # to catch the SVD does not converge error:
+                            except Exception as e:
+                                logger.error(e)
+                                try:  # retrial for SVD computation
+                                    logger.debug("add to check numerical instability")
+                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
                                     soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    logger.info(f"soft_rank_global {soft_rank_global}")
-                                    gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
-                                        'n_clusters']
-                                    gamma_estimated_list.append(config['constant_factor'] * gamma_estimated)
-
-                                # to catch the SVD does not converge error:
+                                    logger.debug("soft_rank_global", soft_rank_global)
+                                    gamma_estimated = config['beta'] * math.sqrt(
+                                        soft_rank_global) / config['n_clusters']
                                 except Exception as e:
                                     logger.error(e)
-                                    try:  # retrial for SVD computation
-                                        logger.debug("add to check numerical instability")
-                                        l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                        soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                        logger.debug("soft_rank_global", soft_rank_global)
-                                        gamma_estimated = config['beta'] * math.sqrt(
-                                            soft_rank_global) / config['n_clusters']
-                                    except Exception as e:
-                                        logger.error(e)
 
 
-                                    gamma_estimated_list.append(config['constant_factor']*gamma_estimated)
+                                gamma_estimated_list.append(config['constant_factor']*gamma_estimated)
 
-                            logger.debug(f"current estimated gamma: {gamma_estimated}")
+                        logger.debug(f"current estimated gamma: {gamma_estimated}")
 
 
                     if epoch <= warmup_epochs:
