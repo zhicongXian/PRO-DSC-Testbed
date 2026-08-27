@@ -21,17 +21,32 @@ from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
+from metrics.clustering import *
 import scipy.io as sio
 import pandas as pd
 import wandb
 import time
 import optuna
 from optuna.integration.wandb import WeightsAndBiasesCallback
+import logging
+from sklearn.decomposition import PCA
+import  jax.scipy as jsc
+import  jax.numpy as jnp
+import math
 from copy import deepcopy
-import json
-from sklearn.metrics import silhouette_score
 
+logging.basicConfig(level=logging.DEBUG,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
+optuna.logging.set_verbosity(optuna.logging.INFO)
+optuna.logging.enable_propagation()
+optuna.logging.disable_default_handler()
+logger = logging.getLogger("auto_gamma_gradient_balancing")
+
+formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
 parser.add_argument('--desc', type=str, default='exp',
@@ -75,21 +90,10 @@ parser.add_argument('--validate_every', type=int, default=25,
                     help='validate to check the clustering performance')
 parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
 parser.add_argument('--out_dir', type=str, default="results")
-def parse_list(value):
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
-
-    if not isinstance(parsed, list):
-        raise argparse.ArgumentTypeError("Argument must be a JSON list")
-
-    return parsed
-
-
-parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
-# Use like:
-
+parser.add_argument('--start_gamma', type=int, default=10,
+                    help='the start value for gamma parameter')
+parser.add_argument('--end_gamma', type=int, default=1000,
+                    help='the end value for gamma parameter')
 args = parser.parse_args()
 
 datasets_list = ['eyaleb', 'coil100', 'orl']
@@ -108,6 +112,31 @@ print(args)
 global_config = vars(args)
 wandb_kwargs = {"project": "pro_dsc" + '_' + global_config['data'] + '_' + global_config["experiment_name"]}
 wandbc = WeightsAndBiasesCallback(wandb_kwargs=wandb_kwargs, as_multirun=True)
+
+def estimate_intrinsic_dimension(X, variance_threshold=0.95):
+    pca = PCA(n_components=variance_threshold, svd_solver="full")
+    pca.fit(X)
+    return pca.n_components_
+
+def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
+    # q, r, p = sla.qr(a, mode="economic", pivoting=True)
+    q, r = jnp.linalg.qr(a, mode="reduced")
+
+    r_take = np.any(np.abs(r) > tol, axis=1)
+    r = r[r_take, ::]
+    q = q[::, r_take]
+
+    return (
+        q@ np.asarray(jsc.linalg.solve(
+            a=r @ r.T,
+            b=r,
+            assume_a="pos",
+            check_finite=False,
+            overwrite_a=True,
+            overwrite_b=True,
+        ))
+    ).T  # [np.argsort(p), ::]
+
 def init_pipeline_with_config(model_dir, config):
     """Initialize folders and Seed for experiments"""
 
@@ -145,7 +174,6 @@ def init_pipeline_with_config(model_dir, config):
     return writer
 
 #################################################################################################################
-
 @wandbc.track_in_wandb()
 def objective( trial : optuna.trial.Trial):
     config = global_config
@@ -218,25 +246,30 @@ def objective( trial : optuna.trial.Trial):
     warmup_epochs = total_wamup_steps
     warmup_step = 0
     print("before training configs:", config)
+
     result_df = pd.DataFrame()
-    final_ari = 0
     early_stopper = EarlyStopper(patience=20, min_delta=0.005)
     si_score = None
     early_stop = False
+    parameter_estimate_epos = 1
+    gamma = None
+    gamma_estimated_list = []
 
+    result_df = pd.DataFrame()
     with tqdm(total=config['epo']) as progress_bar:
         t_begin = time.time()
         for epoch in range(config['epo']):
             progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(config['epo']))
             model.train()
-            loss_per_epoch = []
             ### learning loss storage
             loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': [],'loss_elastic_net':[]}
+            loss_per_epoch = []
+
 
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
                 y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
+                with torch.amp.autocast('cuda', enabled=True):
                     z, logits = model(x)
                     self_coeff = (logits @ logits.T)
                     Sign_self_coeff = torch.sign(self_coeff)
@@ -247,7 +280,7 @@ def objective( trial : optuna.trial.Trial):
                     Pi = Pi * Pi.shape[-1]
                     self_coeff = Pi[0]
                     # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff)) # here he also does this!
+                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
 
                     ### compute the affinity matrix
                     A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
@@ -255,30 +288,54 @@ def objective( trial : optuna.trial.Trial):
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
+                        try:
+                            _, U = torch.linalg.eigh(L) # to do what happen when pytorch fail to converge?
+                        except Exception as e:
+                            print(e)
+                            assert torch.isfinite(L).all(), "A contains NaN or Inf"
+                            A = L.to(torch.float64)
+
+                            # Force symmetry / Hermitian
+                            A = 0.5 * (A + A.mH)
+
+                            # Normalize scale to avoid huge/small values
+                            scale = A.norm(dim=(-2, -1), keepdim=True).clamp_min(torch.finfo(A.dtype).tiny)
+                            A = A / scale
+
+                            # Ridge regularization: good for covariance / PSD matrices
+                            I = torch.eye(A.shape[-1], device=A.device, dtype=A.dtype)
+                            eps = torch.finfo(A.dtype).tiny
+                            A = A + eps * I
+
+                            _, U = torch.linalg.eigh(A)
                         U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
 
-                    if epoch <= warmup_epochs:
+
+                    if warmup_step <= total_wamup_steps:
                         loss = warmup_criterion(z)
                         loss_dict['loss_TCR'].append(loss.item())
                     else:
-                        loss_tcr = warmup_criterion(z) # logdet() loss
-                        loss_exp = 0.5 * (torch.linalg.norm(z.T - z.T @ Sign_self_coeff.mul(A) )) ** 2 / config['bs'] # ||Z-ZC||_F loss
-                        loss_bl = torch.trace(L.T @ W) / config['bs'] # r() loss
+                        loss_tcr = warmup_criterion(z)  # logdet() loss
+                        loss_exp = 0.5 * (torch.linalg.norm(
+                            z.T - z.T @ Sign_self_coeff.mul(self_coeff))) ** 2 / config['bs']  # ||Z-ZC||_F loss
+                        loss_bl = torch.trace(L.T @ W) / config['bs']  # r() loss
 
                         ############# here we add the elastic-net regularizer ######################
                         loss_elastic_net = (config['lambda'] * torch.abs(self_coeff)).sum() + ((1.0 - config['lambda'] ) / 2.0 * torch.pow(self_coeff , 2)).sum()
                         loss_elastic_net = loss_elastic_net / config['bs']
 
-                        loss = loss_tcr + config['gamma'] * loss_exp + config['beta'] * loss_elastic_net #config['beta'] * loss_bl
+
+                        loss = loss_tcr + config['gamma'] * loss_exp + config['beta']* loss_elastic_net #config['beta'] * loss_bl
 
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())
                         loss_dict['loss_elastic_net'].append(loss_elastic_net.item())
 
-                if epoch <= warmup_epochs:
+                    loss_per_epoch.append(loss.item())
+
+                if warmup_step <= total_wamup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -291,21 +348,20 @@ def objective( trial : optuna.trial.Trial):
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == warmup_epochs:
+                if warmup_step == total_wamup_steps:
                     print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= total_wamup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
                         tcr_loss="{:5.4f}".format(loss_tcr.item()),
                         exp_loss="{:5.4f}".format(loss_exp.item()),
                         block_loss="{:5.4f}".format(loss_bl.item()),
-                        elastic_net_loss = "{:5.4f}".format(loss_elastic_net.item())
+                        elastic_net_loss="{:5.4f}".format(loss_elastic_net.item())
                     )
                 warmup_step += 1
-                loss_per_epoch.append(loss.item())
             progress_bar.update(1)
 
             if epoch > total_wamup_steps:
@@ -322,7 +378,7 @@ def objective( trial : optuna.trial.Trial):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or early_stop:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
                 t_end = time.time()
@@ -331,14 +387,13 @@ def objective( trial : optuna.trial.Trial):
                     z_list = []
                     y_list = []
                     x_list = []
-
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
                         y_list.append(y.detach().cpu().numpy())
-                        x_list.append(x.detach().cpu().numpy())
                         z, logits = model(x)
                         logits_list.append(logits)
                         z_list.append(z)
+                        x_list.append(x.detach().cpu().numpy())
 
                     logits = torch.cat(logits_list, dim=0)
                     z = torch.cat(z_list, dim=0)
@@ -348,29 +403,30 @@ def objective( trial : optuna.trial.Trial):
                     Pi = Pi * Pi.shape[-1]
                     self_coeff = Pi[0]
 
-                    y_np = np.concatenate(y_list, axis=0)
                     x_np = np.concatenate(x_list, axis=0)
-
-
+                    y_np = np.concatenate(y_list, axis=0)
                     x_np = np.reshape(x_np, (len(x_np), -1))
                     acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
-                                                                                                                                     seeds=[config['seed'] ])
-                    # evaluate on the silhouette score:
-                    si_score = np.mean(np.asarray(si_lst))  #silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
+                                                                                                                                                                                            seeds=[config['seed'] ])
+
+                    si_score = np.mean(np.asarray(si_lst))
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
                             'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                                np.max(sde_lst), epoch))
                     print(
                         'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
-                                np.mean(acc_lst), np.max(acc_lst),
-                                np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst), np.max(sde_lst), epoch))
+                            np.mean(acc_lst), np.max(acc_lst),
+                            np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
+                            np.max(sde_lst), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
+                          'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'acc_std': np.std(acc_lst),
                           'nmi': np.mean(nmi_lst),
@@ -381,9 +437,8 @@ def objective( trial : optuna.trial.Trial):
                           'subspace_discovery_err_std': np.std(sde_lst),
                           'silhouette_score': si_score,
                           'silhouette_score_std': np.std(si_lst),
-                          'time': t_end - t_begin
-                          }])]
-                        )
+                          'time': t_end - t_begin,
+                          }])])
 
                     result_df.to_csv(
                         '{}/{}_{}.csv'.format(
@@ -397,32 +452,30 @@ def objective( trial : optuna.trial.Trial):
                             "acc": np.mean(acc_lst),
                             "nmi": np.mean(nmi_lst),
                             "ari": np.mean(ari_lst),
-                            "gamma": config['gamma'],
+                            "gamma_default": config['gamma'],
+                            'gamma_estimated': gamma,
                             "seed": config['seed'],
                             'subspace_discovery_err:': np.mean(sde_lst),
                             'silhouette_score': si_score,
                         })
-                    final_ari = np.mean(ari_lst)
+
                     if early_stop:
                         print("Early Stopping Ends...")
                         break
-
     return -si_score
+def load_sweep_config():
+    sweep_config = {"method": "grid"}
+    parameters_dict = {}
+    gamma_list = np.arange(global_config['start_gamma'],global_config['end_gamma']+1,10).tolist()#list(np.linspace(10, 1000, 200))
+    parameters_dict.update({'gamma':{"values":gamma_list}})
+    eval_metric = {"name": "ari", "goal": "maximize"}
+    sweep_config["parameters"] = parameters_dict
+    sweep_config["metric"] = eval_metric
 
-# def interface_to_train():
-#     config = global_config
-#     with wandb.init(project="pro_dsc"+'_'+config["experiment_name"], config=config):
-#
-#         for key in wandb.config.as_dict():
-#             config[key] = wandb.config.as_dict().get(key)
-#
-#         train(config)
+    return sweep_config
+
+
 if __name__ == '__main__':
-    # sampler = optuna.samplers.TPESampler(
-    #     multivariate=True,
-    #     group=True,
-    #     seed=42,
-    # )
 
     for seed in global_config['seeds']:
         global_config['seed'] = deepcopy(seed)
@@ -449,7 +502,3 @@ if __name__ == '__main__':
 
         with open("{}/{}_{}_best_run_seed.json".format(args.out_dir, args.data.lower(), args.experiment_name), "w") as f:
             json.dump([best_run], f, indent=4)
-
-
-
-

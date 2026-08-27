@@ -26,7 +26,8 @@ from loss.loss_fn import TotalCodingRate
 from utils import *
 from metrics.clustering import spectral_clustering_metrics, \
     spectral_clustering_metrics_with_ari_and_subspace_discovery_error, \
-    spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
+    spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds, \
+spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds_nc
 from metrics.clustering import *
 import pandas as pd
 import pickle

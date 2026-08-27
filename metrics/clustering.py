@@ -68,7 +68,7 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
     #     print('---Oversegmented graph, setting higher eigensolver tolerance (unstable results)---')
     #     # oversegmented, need higher tolerance
     #     tol = 1e-4
-        
+
     if solver_type=='shift_invert':
         vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass+extra_dim, sigma=1e-6, which='LM', tol=tol)
     elif solver_type=='la':
@@ -82,7 +82,7 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
             k=nclass+extra_dim, sigma=None,  which='LM', tol=tol)
     else:
         raise ValueError('invalid solver')
-    
+
     if normalize_embed:
         embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
     cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init) ##--TODO there is also a seed here to be set!!
@@ -97,15 +97,15 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
         acc_lst.append(acc)
         nmi_lst.append(nmi_score)
         pred_lst.append(pred_label)
-        
+
     #conn_lst = connectivity_lst(A, label)
-    
+
     if verbose:
         print(f'Acc mean: {np.mean(acc_lst):.3f}   ||| stdev: {np.std(acc_lst):.4f}')
     # if components > nclass:
     #     # do not record unstable results for oversegmented case
     #     acc_lst = [0]
-    
+
     return acc_lst, nmi_lst, pred_lst # fd_error, nnz
 
 
@@ -332,6 +332,313 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
 
     return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list   # fd_error, nnz
 
+def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
+                                extra_dim=0, tol=0, seeds= [1,2]):
+    """ n_init is number of separate runs of kmeans to average over
+    computes average accuracy and nmi
+    """
+    lap = scipy.sparse.csgraph.laplacian(A, normed=True)
+    # nnz, fd_error, components, wrong_edge = basic_metrics(A, label, verbose=False)
+    # if components > nclass:
+    #     print('---Oversegmented graph, setting higher eigensolver tolerance (unstable results)---')
+    #     # oversegmented, need higher tolerance
+    #     tol = 1e-4
+
+    if solver_type == 'shift_invert':
+        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass + extra_dim, sigma=1e-6, which='LM', tol=tol)
+    elif solver_type == 'la':
+        vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass + extra_dim,
+                                                    sigma=None, which='LA', tol=tol)
+    elif solver_type == 'lm':
+        k = nclass + extra_dim
+
+        vals, embedding = scipy.sparse.linalg.eigsh(
+            2 * scipy.sparse.identity(lap.shape[0]) - lap, ncv=max(2 * k + 1, 50),
+            k=nclass + extra_dim, sigma=None, which='LM', tol=tol)
+    else:
+        raise ValueError('invalid solver')
+
+    if normalize_embed:
+        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+
+    acc_lst = []
+    nmi_lst = []
+    pred_lst = []
+    ari_lst = []
+    sde_lst = []
+    si_list = []
+    for seed in seeds:
+        cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=1, random_state=seed)
+        cluster_model.fit(embedding)
+        pred_label = cluster_model.labels_
+        acc = clustering_accuracy(label, pred_label)
+        nmi_score = nmi(label, pred_label)
+        ari = adjusted_rand_score(label, pred_label)
+        acc_lst.append(acc)
+        nmi_lst.append(nmi_score)
+        pred_lst.append(pred_label)
+        ari_lst.append(ari)
+        subspace_discovery_error = self_representation_loss(label, A.T)
+        sde_lst.append(subspace_discovery_error)
+        si = silhouette_score(x_np, pred_label)
+        si_list.append(si)
+
+
+        # conn_lst = connectivity_lst(A, label)
+
+    if verbose:
+        print(f'Acc mean: {np.mean(acc_lst):.3f}   ||| stdev: {np.std(acc_lst):.4f}')
+    # if components > nclass:
+    #     # do not record unstable results for oversegmented case
+    #     acc_lst = [0]
+
+    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list   # fd_error, nnz
+
+
+import numpy as np
+
+
+def estimate_subspace_basis(
+    X: np.ndarray,
+    n_components: int | None = None,
+    explained_variance: float = 0.95,
+    affine: bool = True,
+):
+    """
+    Estimate an orthonormal basis for one cluster.
+
+    Parameters
+    ----------
+    X : ndarray, shape (n_samples, n_features)
+        Points belonging to one cluster.
+    n_components : int or None
+        Desired subspace dimension. If None, choose it using
+        `explained_variance`.
+    explained_variance : float
+        Fraction of variance/energy to retain when n_components is None.
+    affine : bool
+        True: estimate an affine subspace mu + span(B).
+        False: estimate a linear subspace span(B) through the origin.
+
+    Returns
+    -------
+    mean : ndarray, shape (n_features,)
+        Affine offset. Zero for a linear subspace.
+    basis : ndarray, shape (n_features, subspace_dimension)
+        Orthonormal basis vectors stored as columns.
+    singular_values : ndarray
+        Retained singular values.
+    """
+    X = np.asarray(X, dtype=np.float64)
+
+    if X.ndim != 2:
+        raise ValueError("X must have shape (n_samples, n_features).")
+    if len(X) == 0:
+        raise ValueError("X must contain at least one point.")
+
+    mean = X.mean(axis=0) if affine else np.zeros(X.shape[1])
+    X_centered = X - mean
+
+    # X_centered = U @ diag(S) @ Vt
+    _, singular_values, Vt = np.linalg.svd(
+        X_centered, full_matrices=False
+    )
+
+    if n_components is None:
+        energy = singular_values**2
+        total_energy = energy.sum()
+
+        if total_energy <= np.finfo(float).eps:
+            raise ValueError(
+                "All points are identical; no nonzero subspace can be estimated."
+            )
+
+        cumulative_ratio = np.cumsum(energy) / total_energy
+        n_components = np.searchsorted(
+            cumulative_ratio, explained_variance
+        ) + 1
+
+    n_components = min(n_components, len(singular_values))
+    basis = Vt[:n_components].T
+
+    return mean, basis, singular_values[:n_components]
+
+def equation5_pairwise_distances(
+    X,
+    labels,
+    orthonormal_bases,
+    normalize=True,
+):
+    """
+    Pairwise point-to-point distance from Equation (5).
+
+    For points x and y assigned to subspaces with projection
+    matrices Px and Py:
+
+        d(x,y) = 1/2 sqrt(
+            x'Qx x + x'Qy x + y'Qx y + y'Qy y
+            - 2|x'Qx y| - 2|x'Qy y|
+        )
+
+    where Qx = I - Px and Qy = I - Py.
+    """
+    X = np.asarray(X, dtype=np.float64)
+    labels = np.asarray(labels)
+
+    if X.ndim != 2:
+        raise ValueError("X must have shape (n_samples, n_features).")
+    if len(labels) != len(X):
+        raise ValueError("X and labels must contain the same number of samples.")
+
+
+    unique_labels = np.unique(labels)
+    indices = {label: np.flatnonzero(labels == label)
+               for label in unique_labels}
+
+    # Ensure every provided basis is orthonormal.
+
+
+    def orthogonal_residual(Z, U):
+        # Z(I - UU^T), without constructing the projection matrix.
+        return Z - (Z @ U) @ U.T # U @U.T @Z #(Z @ U) @ U.T
+
+    distances = np.zeros((len(X), len(X)), dtype=np.float64)
+
+    for position_a, label_a in enumerate(unique_labels):
+        index_a = indices[label_a]
+        X_a = X[index_a]
+        U_a = orthonormal_bases[label_a]
+
+        for label_b in unique_labels[position_a:]:
+            index_b = indices[label_b]
+            X_b = X[index_b]
+            U_b = orthonormal_bases[label_b]
+
+            # Residuals under both subspaces
+            Qa_x = orthogonal_residual(X_a, U_a)
+            Qa_y = orthogonal_residual(X_b, U_a)
+            Qb_x = orthogonal_residual(X_a, U_b)
+            Qb_y = orthogonal_residual(X_b, U_b)
+
+            squared_distance = (
+                np.sum(Qa_x**2, axis=1)[:, None]
+                + np.sum(Qb_x**2, axis=1)[:, None]
+                + np.sum(Qa_y**2, axis=1)[None, :]
+                + np.sum(Qb_y**2, axis=1)[None, :]
+                - 2.0 * np.abs(Qa_x @ X_b.T)
+                - 2.0 * np.abs(X_a @ Qb_y.T)
+            )
+
+            # Protect against small negative floating-point errors.
+            block = 0.5 * np.sqrt(np.maximum(squared_distance, 0.0))
+
+            distances[np.ix_(index_a, index_b)] = block
+            distances[np.ix_(index_b, index_a)] = block.T
+
+    # Enforce exact symmetry and zero diagonal for sklearn.
+    distances = 0.5 * (distances + distances.T)
+    np.fill_diagonal(distances, 0.0)
+
+    return distances
+
+
+def calculate_silhouette_score_point_to_point_subspaace_distance_based(x_np, y_pred):
+    """
+
+    """
+    unique_labels = np.unique(y_pred)
+    basis_dict = {}
+    for label in unique_labels:
+        subspace_samples = x_np[y_pred == label]
+        # perform svd to calculate bases
+
+        _, basis, _ = estimate_subspace_basis(subspace_samples)
+        basis_dict[label] = basis
+
+    subspace_weighted_distances = equation5_pairwise_distances(x_np, y_pred,basis_dict,normalize=False)
+
+    mean_score = silhouette_score(
+        subspace_weighted_distances,
+        y_pred,
+        metric="precomputed",
+    )
+    return mean_score
+
+
+
+
+
+
+
+def spectral_clustering_metrics_with_projected_subspace_distance(x_np, A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
+                                extra_dim=0, tol=0, seeds= [1,2]):
+    """ n_init is number of separate runs of kmeans to average over
+    computes average accuracy and nmi
+    """
+    lap = scipy.sparse.csgraph.laplacian(A, normed=True)
+    # nnz, fd_error, components, wrong_edge = basic_metrics(A, label, verbose=False)
+    # if components > nclass:
+    #     print('---Oversegmented graph, setting higher eigensolver tolerance (unstable results)---')
+    #     # oversegmented, need higher tolerance
+    #     tol = 1e-4
+
+    if solver_type == 'shift_invert':
+        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass + extra_dim, sigma=1e-6, which='LM', tol=tol)
+    elif solver_type == 'la':
+        vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass + extra_dim,
+                                                    sigma=None, which='LA', tol=tol)
+    elif solver_type == 'lm':
+        k = nclass + extra_dim
+
+        vals, embedding = scipy.sparse.linalg.eigsh(
+            2 * scipy.sparse.identity(lap.shape[0]) - lap, ncv=max(2 * k + 1, 50),
+            k=nclass + extra_dim, sigma=None, which='LM', tol=tol)
+    else:
+        raise ValueError('invalid solver')
+
+    if normalize_embed:
+        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+
+    acc_lst = []
+    nmi_lst = []
+    pred_lst = []
+    ari_lst = []
+    sde_lst = []
+    si_list = []
+    nc_list = []
+    si_subspace_list = []
+    for seed in seeds:
+        cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=1, random_state=seed)
+        cluster_model.fit(embedding)
+        pred_label = cluster_model.labels_
+        acc = clustering_accuracy(label, pred_label)
+        nmi_score = nmi(label, pred_label)
+        ari = adjusted_rand_score(label, pred_label)
+        acc_lst.append(acc)
+        nmi_lst.append(nmi_score)
+        pred_lst.append(pred_label)
+        ari_lst.append(ari)
+        subspace_discovery_error = self_representation_loss(label, A.T)
+        sde_lst.append(subspace_discovery_error)
+        si = silhouette_score(x_np, pred_label)
+        si_list.append(si)
+        nc = normalized_cut_np(A, pred_label)
+        nc_list.append(nc)
+        si_subspace = calculate_silhouette_score_point_to_point_subspaace_distance_based(x_np, pred_label)
+        si_subspace_list.append(si_subspace)
+
+
+
+        # conn_lst = connectivity_lst(A, label)
+
+    if verbose:
+        print(f'Acc mean: {np.mean(acc_lst):.3f}   ||| stdev: {np.std(acc_lst):.4f}')
+    # if components > nclass:
+    #     # do not record unstable results for oversegmented case
+    #     acc_lst = [0]
+
+    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list, nc_list, si_subspace_list   # fd_error, nnz
+
 def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds_nc(x_np, A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
                                 extra_dim=0, tol=0, seeds= [1,2]):
     """ n_init is number of separate runs of kmeans to average over
@@ -387,6 +694,8 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
         nc_list.append(nc)
 
 
+
+
         # conn_lst = connectivity_lst(A, label)
 
     if verbose:
@@ -395,4 +704,4 @@ def spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds
     #     # do not record unstable results for oversegmented case
     #     acc_lst = [0]
 
-    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list, nc_list   # fd_error, nnz
+    return acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list, nc_list

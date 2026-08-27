@@ -20,5 +20,5 @@ export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_subspace_gamma_optuna_automl_random_elastic_net.py --data=coil100 --experiment_name=coil100_random_automl_elastic_net --seeds=[42,0,1,2,3,4,5,6,7,8,9] >> pro_dsc_coil100_random_automl_out.txt
+python3 ./main_subspace_gamma_optuna_automl_random_elastic_net.py --data=coil100 --experiment_name=coil100_random_automl_elastic_net3 --seeds=[0,42,1,2,3,4,5,6,7,8,9] >> pro_dsc_coil100_random_automl_out.txt
 
