@@ -33,5 +33,5 @@ echo "Range: ${start_constant_factor} to ${end_constant_factor}"
 
 
 python3 ./main_auto_gamma_with_hpo_final_constant_factor_sweep.py --data=cifar100 --start_constant_factor=$start_constant_factor \
- --end_constant_factor=$end_constant_factor --experiment_name="wandb_constant_sweep_cifar100_from{$start_constant_factor}_to{$end_constant_factor}" --seed=0
+ --end_constant_factor=$end_constant_factor --experiment_name="wandb_constant_sweep_cifar100_from{$start_constant_factor}_to{$end_constant_factor}_beta_500" --seed=0
 
