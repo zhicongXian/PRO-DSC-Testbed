@@ -94,6 +94,20 @@ parser.add_argument('--start_gamma', type=int, default=10,
                     help='the start value for gamma parameter')
 parser.add_argument('--end_gamma', type=int, default=1000,
                     help='the end value for gamma parameter')
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
+
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
+
+    return parsed
+
+
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 args = parser.parse_args()
 
 datasets_list = ['eyaleb', 'coil100', 'orl']
