@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#SBATCH --job-name=pro_dsc_optuna_mnist
-#SBATCH --output=mnist_optuna.txt
+#SBATCH --job-name=pro_dsc_optuna_cifar100_subspace_metric
+#SBATCH --output=optuna_cifar100_auto_gamma.txt
 #SBATCH --ntasks=1
 #SBATCH --time=10-00:00:00
 #SBATCH --gres=gpu:1
@@ -13,11 +13,11 @@ nvidia-smi
 
 env
 
-# venvb
+# venv
 source /home/wiss/xian/venvs/subspace_clustering_3_12/bin/activate
 export BLAS=/usr/lib/x86_64-linux-gnu/blas/libblas.so.3
 export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 # pip install -U pip setuptools wheel
 # train
-python3 ./main_gamma_optuna_automl.py --data=mnist --experiment_name=mnist_automl_10_trials >> mnist_optuna_out.txt
+python3 ./main_gamma_optuna_automl_with_projected_subspace.py --data=cifar100  --experiment_name=cifar100_automl_subspace_metric   >> optuna_cifar100_auto_gamma_out.txt
 
