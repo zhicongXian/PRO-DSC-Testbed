@@ -471,6 +471,7 @@ def objective( trial : optuna.trial.Trial):
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
                         [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
+                          'constant_factor': config['constant_factor'],
                           'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
                           'acc_std': np.std(acc_lst),
