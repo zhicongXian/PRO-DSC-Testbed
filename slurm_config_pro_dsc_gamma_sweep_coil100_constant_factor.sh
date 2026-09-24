@@ -23,8 +23,8 @@ export LAPACK=/usr/lib/x86_64-linux-gnu/lapack/liblapack.a
 
 
 
-starts=(0.02 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0)
-ends=(0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 2)
+starts=(0.8 0.9 1.0 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.02)
+ends=(0.9 1.0 2.0 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1)
 
 start_constant_factor="${starts[$SLURM_ARRAY_TASK_ID]}"
 end_constant_factor="${ends[$SLURM_ARRAY_TASK_ID]}"
