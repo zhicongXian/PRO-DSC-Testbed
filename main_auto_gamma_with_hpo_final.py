@@ -716,36 +716,6 @@ def objective( trial : optuna.trial.Trial):
 
 
 
-                        # here add the gamma estimations:
-                        # if epoch> warmup_epochs and epoch <= warmup_epochs + 10: # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
-                        #     with torch.no_grad():
-                        #         block = z.detach().clone().double()
-                        #         ########## Old way to calculate pseudo inverse and somehow does not lead to identity matrix ##
-                        #         approx_pseudo = imqrginv_fixed(block.detach().cpu().numpy())
-                        #         c_matrix = np.dot(block.detach().cpu().numpy(),
-                        #                                 approx_pseudo)
-                        #         #######################################
-                        #
-                        #         diagIndices = np.diag_indices(c_matrix.shape[0])
-                        #         c_matrix[diagIndices] = 0
-                        #
-                        #          # this is especially psueo inverse leads to identity matrices
-                        #         logger.debug(f"constant factor is: {config['constant_factor']}")
-                        #         gamma_estimated = config['constant_factor']*(np.linalg.norm(c_matrix, 1,
-                        #                                           axis=0).sum() / args.bs) * args.beta
-                        #         logger.debug(f"before gardient ration: {gamma_estimated}")
-                        #         logger.debug(f"after gardient ration: , {gamma_estimated/gradient_ratio}")
-                        #         block_reconstructed = torch.from_numpy(c_matrix).to(device) @ block
-                        #         approx_err = torch.sum((block - block_reconstructed) ** 2).item() / args.bs
-                        #
-                        #         logger.debug(f"current approx err: , {approx_err}")
-                        #         gamma_estimated = gamma_estimated/gradient_ratio
-                        #
-                        #
-                        #         gamma_estimated_list.append(gamma_estimated)
-                        #         logger.debug(f"current estimated gamma: {gamma_estimated}")
-
-
                         loss_dict['loss_TCR'].append(loss_tcr.item())
                         loss_dict['loss_Exp'].append(loss_exp.item())
                         loss_dict['loss_Block'].append(loss_bl.item())

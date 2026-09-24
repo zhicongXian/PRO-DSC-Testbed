@@ -1,10 +1,10 @@
 import os
 import sys
-import wandb
 
 sys.path.append('./')
 
 from datetime import datetime
+
 current_date = datetime.now()
 formatted_date = current_date.strftime('%m-%d')
 
@@ -16,34 +16,37 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.model import PRO_DSC
+from model.DSCNet import PRO_DSC
 from model.sink_distance import SinkhornDistance
 from data.data_utils import FeatureDataset
 from loss.loss_fn import TotalCodingRate
 from utils import *
-from metrics.clustering import spectral_clustering_metrics, spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds_nc
+from metrics.clustering import *
+import scipy.io as sio
 import pandas as pd
-import pickle
+import wandb
+import time
+import optuna
+from optuna.integration.wandb import WeightsAndBiasesCallback
 import logging
-import math
-from sklearn.preprocessing import normalize
-from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 import  jax.scipy as jsc
 import  jax.numpy as jnp
+import math
+from copy import deepcopy
+from sklearn.preprocessing import normalize
 
-
-logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
-
-logger = logging.getLogger("auto_gamma_constant_factor_sweep")
+logging.basicConfig(level=logging.DEBUG,format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", force=True)
+optuna.logging.set_verbosity(optuna.logging.INFO)
+optuna.logging.enable_propagation()
+optuna.logging.disable_default_handler()
+logger = logging.getLogger("auto_gamma_gradient_balancing")
 
 formatter = logging.Formatter(
     "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
-
 logger.addHandler(handler)
 
 parser = argparse.ArgumentParser(description='PRO-DSC Training')
@@ -65,70 +68,74 @@ parser.add_argument('--z_dim', type=int, default=128,
                     help='dimension of the learned representation')
 parser.add_argument('--n_clusters', type=int, default=10,
                     help='number of subspaces to cluster')
-parser.add_argument('--epo', type=int, default=5000,
+parser.add_argument('--epo', type=int, default=15,
                     help='number of epochs for training')
-parser.add_argument('--bs', type=int, default=128,
+parser.add_argument('--bs', type=int, default=1024,
                     help='input batch size for training')
 parser.add_argument('--lr', type=float, default=1e-4,
                     help='learning rate (default: 0.0001)')
-parser.add_argument('--lr_c', type=float, default=1e-4,
-                    help='learning rate for clustering head (default: 0.0001)')
 parser.add_argument('--momo', type=float, default=0.9,
                     help='momentum (default: 0.9)')
 parser.add_argument('--wd1', type=float, default=1e-4,
                     help='weight decay for all other parameters except clustering head (default: 1e-4)')
 parser.add_argument('--wd2', type=float, default=5e-3,
                     help='weight decay for clustering head (default: 5e-3)')
-parser.add_argument('--pieta', type=float, default=0.1,
-                    help='hyper-parameter for Sinkhorn projection')
-parser.add_argument('--piiter', type=int, default=1,
-                    help='hyper-parameter for Sinkhorn projection')
 parser.add_argument('--eps', type=float, default=0.1,
                     help='eps squared for total coding rate (default: 0.1)')
 parser.add_argument('--warmup', type=int, default=-1,
                     help='Steps of warmup-up training')
+
+parser.add_argument('--save_every', type=int, default=50,
+                    help='model save every')
+parser.add_argument('--validate_every', type=int, default=25,
+                    help='validate to check the clustering performance')
+parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
+parser.add_argument('--out_dir', type=str, default="results")
+parser.add_argument('--start_gamma', type=int, default=10,
+                    help='the start value for gamma parameter')
+parser.add_argument('--end_gamma', type=int, default=1000,
+                    help='the end value for gamma parameter')
 parser.add_argument('--start_constant_factor', type=float, default=0.02,
                     help='the start value for gamma parameter')
 parser.add_argument('--end_constant_factor', type=float, default=1,
                     help='the end value for gamma parameter')
 
-parser.add_argument('--save_every', type=int, default=50,
-                    help='model save every')
-parser.add_argument('--validate_every', type=int, default=2000,
-                    help='validate to check the clustering performance')
+def parse_list(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"Invalid JSON list: {e}")
 
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("Argument must be a JSON list")
 
-############## addtitional to this script:
-
-parser.add_argument('--gamma_list', type=int, default=[100,120],
-                    help='list of coeff for expr loss')
-parser.add_argument('--experiment_name', type=str, default="subspace_coil100")
-parser.add_argument('--out_dir', type=str, default="results")
-
-parser.add_argument('--input_dim', type=int, default=768,
-                    help='pro dsc input dim')
+    return parsed
+parser.add_argument('-s', '--seeds', type=parse_list, help='here you can set a list of seeds', default=[1, 2, 3])
+# Use like:
 
 args = parser.parse_args()
 
-datasets_list = ['cifar10','cifar100','cifar10-mcr','mnist','cifar20','tinyimagenet','imagenet','imagenetdogs']
+datasets_list = ['eyaleb', 'coil100', 'orl']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 # parse configurations from yaml
-with open(os.path.join('configs','{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
+with open(os.path.join('configs', '{}.yaml'.format(args.data.lower())), 'r', encoding='utf-8') as file:
     yaml_data = yaml.safe_load(file)
     for key, value in yaml_data.items():
-        if key == "experiment_name" or key =="seed":
+        if key == "experiment_name" or key == "seed":
             continue
-        setattr(args, key, value) # he does it another way around.
+        setattr(args, key, value)
 args.desc = '_'.join(
     [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'beta{}'.format(args.beta), args.desc])
 print(args)
-#################################################################################################################
-
-
-###################load args to config ##############################################################
 global_config = vars(args)
-#########################################################################################
+wandb_kwargs = {"project": "pro_dsc" + '_' + global_config['data'] + '_' + global_config["experiment_name"]}
+wandbc = WeightsAndBiasesCallback(wandb_kwargs=wandb_kwargs, as_multirun=True)
+
+def estimate_intrinsic_dimension(X, variance_threshold=0.95):
+    pca = PCA(n_components=variance_threshold, svd_solver="full")
+    pca.fit(X)
+    return pca.n_components_
 
 def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
     # q, r, p = sla.qr(a, mode="economic", pivoting=True)
@@ -149,90 +156,41 @@ def imqrginv_fixed(a: np.ndarray, tol: float = 1e-5) -> np.ndarray:
         ))
     ).T  # [np.argsort(p), ::]
 
-def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
-    g = torch.autograd.grad(
-        loss,
-        tensor,
-        retain_graph=True,
-        create_graph=False,
-        allow_unused=True
-    )[0]
+def init_pipeline_with_config(model_dir, config):
+    """Initialize folders and Seed for experiments"""
 
-    if g is None:
-        return torch.tensor(0.0, device=tensor.device)
 
-    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
+    """Initialize folders and Seed for experiments"""
+    # project folder
+    if os.path.exists(model_dir):
+        print('EXP PATH EXISTS, PLEASE BE CAUTIOUS')
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(os.path.join(model_dir, 'checkpoints'), exist_ok=True)
+    os.makedirs(os.path.join(model_dir, 'tensorboard'), exist_ok=True)
+    os.makedirs(os.path.join(model_dir, 'codes'), exist_ok=True)
 
-def load_dataset(config):
-    # Loading features and labels
-    if config['data'].lower() in ['cifar10','cifar100','cifar20']:
-        feature_dict = torch.load(config['data_dir'])
-        clip_features = feature_dict['features'][:50000]
-        clip_labels = feature_dict['ys'][:50000]
+    # save exp settings
+    save_params(model_dir, config)
 
-        feature_dict = torch.load(config['data_dir_val'])
-        clip_features_test = feature_dict['features'][-10000:]
-        clip_labels_test = feature_dict['ys'][-10000:]
+    # GPU and seed setup
+    os.environ['PYTHONHASHSEED'] = str(config['seed'])
+    random.seed(config['seed'])
+    np.random.seed(config['seed'])
+    torch.manual_seed(config['seed'])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(config['seed'])
+        torch.cuda.manual_seed_all(config['seed'])
+        torch.backends.cudnn.deterministic = True
 
-        if config['data'].lower() == 'cifar20':
-            from data.dataset import sparse2coarse
-            clip_labels = torch.from_numpy(sparse2coarse(clip_labels))
-            clip_labels_test = torch.from_numpy(sparse2coarse(clip_labels_test))
-    elif config['data'].lower() == "cifar10-mcr":
+    # tensorboard settings
+    from torch.utils.tensorboard import SummaryWriter
+    writer = SummaryWriter(os.path.join(model_dir, 'tensorboard'))
 
-            with open('data/datasets/CIFAR10-MCR2/cifar10-features.npy', 'rb') as f:
-                full_samples = np.load(f)
-                clip_features = full_samples[:50000]
-                clip_features_test = full_samples[-10000:]
-            with open('data/datasets/CIFAR10-MCR2/cifar10-labels.npy', 'rb') as f:
-                full_labels = np.load(f)
-                clip_labels = full_labels[:50000]
-                clip_labels_test = full_labels[-10000:]
-            train_ids = np.arange(len(clip_labels))
-    elif config['data'].lower() == 'mnist':
-        # downsample = 1280
-        # previous_path = 'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
-        previous_path = './data/datasets'  # 'D:/Python_code/Self-Expressive-Network-main/Self-Expressive-Network-main/datasets/'
-        with open(previous_path + '/{}/{}_scattering_train_data.pkl'.format( config['data'].upper(),  config['data'].upper()),
-                  'rb') as f:
-            train_samples = pickle.load(f)
-        with open(previous_path + '/{}/{}_scattering_train_label.pkl'.format( config['data'].upper(),  config['data'].upper()),
-                  'rb') as f:
-            train_labels = pickle.load(f)
-        with open(previous_path + '/{}/{}_scattering_test_data.pkl'.format( config['data'].upper(),  config['data'].upper()),
-                  'rb') as f:
-            test_samples = pickle.load(f)
-        with open(previous_path + '/{}/{}_scattering_test_label.pkl'.format( config['data'].upper(),  config['data'].upper()),
-                  'rb') as f:
-            test_labels = pickle.load(f)
-        full_samples = np.concatenate([train_samples, test_samples], axis=0)  # [:downsample] #[nb_samples,1, 217, 4,4]
-        full_labels = np.concatenate([train_labels, test_labels], axis=0)  # [:downsample]
-        full_samples = np.reshape(full_samples, (len(full_samples), -1))
-        args.input_dim = full_samples.shape[-1]
-        config['input_dim'] = args.input_dim
-        clip_features = train_samples
-        clip_features_test = test_samples
-        clip_labels = train_labels
-        clip_labels_test = test_labels
-    # y in [0, 1, ..., K-1]
-
-    else:
-        feature_dict = torch.load(config['data_dir'])
-        clip_features = feature_dict['features']
-        clip_labels = feature_dict['ys']
-
-        feature_dict = torch.load(config['data_dir_val'])
-        clip_features_test = feature_dict['features']
-        clip_labels_test = feature_dict['ys']
-
-    #### construct dataloader for batch training
-    clip_feature_set = FeatureDataset(clip_features, clip_labels)
-    train_loader = DataLoader(clip_feature_set, batch_size=config['bs'], shuffle=True, drop_last=True)
-    clip_feature_set_test = FeatureDataset(clip_features_test, clip_labels_test)
-    test_loader = DataLoader(clip_feature_set_test, batch_size=config['bs'], shuffle=True, drop_last=False)
-
-    return train_loader, test_loader
-
+    # copy codes
+    for filepath in os.listdir('./'):
+        if filepath.endswith('.py'):
+            shutil.copyfile(os.path.join('./', filepath), os.path.join(model_dir, 'codes', filepath))
+    return writer
 
 def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=False):
     """
@@ -282,100 +240,120 @@ def estimate_mean_off_support_spectral_distance(estimated_c, k, normalize_rows=F
 
 
     return 0.5*(M*D_squared).mean(), score
+def grad_norm_wrt_tensor(loss, tensor, eps=1e-12):
+    g = torch.autograd.grad(
+        loss,
+        tensor,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )[0]
 
-################################custom model log files #####################
-def init_pipeline_with_config(model_dir, config):
-    """Initialize folders and Seed for experiments"""
+    if g is None:
+        return torch.tensor(0.0, device=tensor.device)
 
-
-    """Initialize folders and Seed for experiments"""
-    # project folder
-    if os.path.exists(model_dir):
-        print('EXP PATH EXISTS, PLEASE BE CAUTIOUS')
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(os.path.join(model_dir, 'checkpoints'), exist_ok=True)
-    os.makedirs(os.path.join(model_dir, 'tensorboard'), exist_ok=True)
-    os.makedirs(os.path.join(model_dir, 'codes'), exist_ok=True)
-
-    # save exp settings
-    save_params(model_dir, config)
-
-    # GPU and seed setup
-    os.environ['PYTHONHASHSEED'] = str(config['seed'])
-    random.seed(config['seed'])
-    np.random.seed(config['seed'])
-    torch.manual_seed(config['seed'])
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(config['seed'])
-        torch.cuda.manual_seed_all(config['seed'])
-        torch.backends.cudnn.deterministic = True
-
-    # tensorboard settings
-    from torch.utils.tensorboard import SummaryWriter
-    writer = SummaryWriter(os.path.join(model_dir, 'tensorboard'))
-
-    # copy codes
-    for filepath in os.listdir('./'):
-        if filepath.endswith('.py'):
-            shutil.copyfile(os.path.join('./', filepath), os.path.join(model_dir, 'codes', filepath))
-    return writer
-
-######## load the model #####################################
-
+    return torch.sqrt(torch.sum(g.detach() ** 2) + eps)
+#################################################################################################################
 
 def train(config):
-    previous_nmi = None
     same_seeds(config['seed'])
-    print("input dim: {}".format(config['input_dim']))
-    print("current seed: {}".format(config['seed']))
-    ######load dataset ############
-    train_loader, test_loader = load_dataset(config)
-    ############### set up writer ##############################
     desc = config['desc']
     dir_name = os.path.join(f'exps/{desc}')
     writer = init_pipeline_with_config(dir_name, config)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = PRO_DSC(input_dim=config['input_dim'], hidden_dim=config['hidden_dim'], z_dim=config['z_dim']).to(device) # input_dim=768
-    sink_layer = SinkhornDistance(config['pieta'], max_iter=config['piiter'])
+    model = PRO_DSC(hidden_dim=config['hidden_dim'], z_dim=config['z_dim'], channels=config['channels'], kernels=config['kernels']).to(device)
+    sink_layer = SinkhornDistance(config['pieta'], max_iter=1)
 
-    #### loss of logdet()
+    if config['data'].lower() == 'orl':
+        # Loading features and labels
+        data = sio.loadmat(config['data_dir'])
+        x, y = data['X'].reshape((-1, 1, 32, 32)), data['Y']  # data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        # network and optimization parameters
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/orl.pkl'), strict=False)
+
+    elif config['data'].lower() == 'eyaleb':
+        data = sio.loadmat(config['data_dir'])
+        img = data['Y']
+        I = []
+        Label = []
+        for i in range(img.shape[2]):
+            for j in range(img.shape[1]):
+                temp = np.reshape(img[:, j, i], [42, 48])
+                Label.append(i)
+                I.append(temp)
+        I = np.array(I)
+        y = np.array(Label[:])
+        Img = np.transpose(I, [0, 2, 1])
+        x = np.expand_dims(Img[:], 1).astype(float)
+        y = y - y.min()
+
+        num_class = 38
+        num_sample = num_class * 64
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/yaleb.pkl'), strict=False)
+
+    elif  config['data'].lower() == 'coil100':
+        data = sio.loadmat(config['data_dir'])
+        x, y = data['fea'].reshape((-1, 1, 32, 32)), data['gnd']
+        y = np.squeeze(y - 1)  # y in [0, 1, ..., K-1]
+        num_sample = x.shape[0]
+        temp = model.pre_feature.load_state_dict(torch.load('DSCNet_AE_pretrain/coil100.pkl'), strict=False)
+
+    #### construct dataloader for batch training
+    config['bs'] = num_sample
+    feature_set = FeatureDataset(x, y)
+    train_loader = DataLoader(feature_set, batch_size=config['bs'], shuffle=True, drop_last=True, num_workers=0)
+    feature_set_test = FeatureDataset(x, y)
+    test_loader = DataLoader(feature_set_test,  batch_size=config['bs'], shuffle=True, drop_last=False, num_workers=0)
+
+    #### loss of TCR
     warmup_criterion = TotalCodingRate(eps=config['eps'])
 
-    ### optimizer
-    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if p.requires_grad]
+    ### learning opt strategy
+    param_list = [p for p in model.pre_feature.parameters() if p.requires_grad] + [p for p in model.subspace.parameters() if
+                                                                                   p.requires_grad]
     param_list_c = [p for p in model.cluster.parameters() if p.requires_grad]
     optimizer = optim.SGD(param_list, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'], nesterov=False)
-    optimizerc = optim.SGD(param_list_c, lr=config['lr_c'], momentum=config['momo'], weight_decay=config['wd2'], nesterov=False)
+    optimizerc = optim.SGD(param_list_c, lr=config['lr'], momentum=config['momo'], weight_decay=config['wd1'], nesterov=False)
     scaler = GradScaler()
 
     ### warmup iteration setting
-    warmup_epochs = config['warmup']
+    total_wamup_steps = config['warmup']
+    warmup_epochs = total_wamup_steps
     warmup_step = 0
-    result_df = pd.DataFrame()
-    parameter_estimate_epos = 1
-    gamma_estimated_list = []
-    estimation_mode= None
-    early_stopper = EarlyStopper(patience=100, min_delta=0.01)
-    early_stop = False
-    gamma = None
+    print("before training configs:", config)
 
+    result_df = pd.DataFrame()
+    early_stopper = EarlyStopper(patience=20, min_delta=0.005)
+    si_score = None
+    early_stop = False
+    parameter_estimate_epos = 1
+    gamma = None
+    gamma_estimated_list = []
+
+    result_df = pd.DataFrame()
     with tqdm(total=config['epo']) as progress_bar:
+        t_begin = time.time()
         for epoch in range(config['epo']):
-            loss_per_epoch = []
-            progress_bar.set_description('Epoch: '+str(epoch)+'/'+str(config['epo']))
+            progress_bar.set_description('Epoch: ' + str(epoch) + '/' + str(config['epo']))
             model.train()
             ### learning loss storage
-            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': []}
+            loss_dict = {'loss_TCR': [], 'loss_Exp': [], 'loss_Block': [] }
+            loss_per_epoch = []
+
             if len(gamma_estimated_list) > 0:
                 gamma_estimated_list = [np.nan if x is None else x for x in gamma_estimated_list],
                 gamma = np.nanmean(np.array(gamma_estimated_list))
                 gamma_estimated_list = []
                 logger.info(f"estimated gamma {gamma}, default gamma is {args.gamma}")
+
+
             for step, (x, y) in enumerate(train_loader):
                 x, y = x.float().to(device), y.to(device)
                 y_np = y.detach().cpu().numpy()
-                with autocast(enabled=True):
+                with torch.amp.autocast('cuda', enabled=True):
                     z, logits = model(x)
                     self_coeff = (logits @ logits.T)
                     Sign_self_coeff = torch.sign(self_coeff)
@@ -386,19 +364,35 @@ def train(config):
                     Pi = Pi * Pi.shape[-1]
                     self_coeff = Pi[0]
                     # eliminate the diagonal value of self_coeff, which fits the constraint of C
-                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff)) # here he also does this!
+                    self_coeff = self_coeff - torch.diag(torch.diag(self_coeff))
 
                     ### compute the affinity matrix
                     A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                    A_np = A.detach().cpu().numpy()
                     ### compute W for BDR
                     L = torch.diag(A.sum(1)) - A
                     with torch.no_grad():
-                        _, U = torch.linalg.eigh(L)
+                        try:
+                            _, U = torch.linalg.eigh(L) # to do what happen when pytorch fail to converge?
+                        except Exception as e:
+                            print(e)
+                            assert torch.isfinite(L).all(), "A contains NaN or Inf"
+                            A = L.to(torch.float64)
+
+                            # Force symmetry / Hermitian
+                            A = 0.5 * (A + A.mH)
+
+                            # Normalize scale to avoid huge/small values
+                            scale = A.norm(dim=(-2, -1), keepdim=True).clamp_min(torch.finfo(A.dtype).tiny)
+                            A = A / scale
+                            # Ridge regularization: good for covariance / PSD matrices
+                            I = torch.eye(A.shape[-1], device=A.device, dtype=A.dtype)
+                            eps = torch.finfo(A.dtype).tiny
+                            A = A + eps * I
+                            _, U = torch.linalg.eigh(A)
+
                         U_hat = U[:, :config['n_clusters']]
                         W = U_hat @ U_hat.T
 
-                    ################ now we start gamma estimation ####################
                     if warmup_epochs-parameter_estimate_epos+1 <= epoch < warmup_epochs +1:  # run on every steps and warmup_step <= total_wamup_steps + nb_steps_per_epoch   no initial pretraining is used:
                         # with torch.no_grad():
                         block = z.detach().clone().double()
@@ -446,7 +440,7 @@ def train(config):
 
                         #############   Further improvement:
 
-                        if math.sqrt(approx_err) < 0.6 and ((20 <= gamma_estimated * reweighting < 1000 and si>0.25) or 10 <= gamma_estimated * g_bd_c< 1000):
+                        if math.sqrt(approx_err) < 0.0 and ((20 <= gamma_estimated * reweighting < 1000 and si>0.25) or 10 <= gamma_estimated * g_bd_c< 1000):
                             if si >0.25:
                                 gamma_estimated_list.append(gamma_estimated*reweighting)
                             else:
@@ -459,35 +453,16 @@ def train(config):
                         else:
                             estimation_mode="stable_rank"
                             # use intrinsic dimension estimation:
-                            B = (np.eye(len(c_matrix)) - c_matrix) @ (np.eye(
-                                len(c_matrix)) - c_matrix).T  # this is from the minimizing l2 norm. !
-                            # soft_rank_global = #  soft_rank_global = frobi**2/(l2_norm_b**2 + 1e-16)effective_intrinsic_dimension_from_Z(B)
+                            logger.debug(f"Fall back using PCA to estimate rank")
+                            gloal_d = estimate_intrinsic_dimension(block.cpu().numpy())
+                            gamma_estimated = math.sqrt(gloal_d)
 
-                            frobi = np.linalg.norm(B, "fro")
-
-                            try:
-                                l2_norm_b = np.linalg.norm(B, 2)
-                                soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                logger.info(f"soft_rank_global {soft_rank_global}")
-                                gamma_estimated = config['beta'] * math.sqrt(soft_rank_global) / config[
-                                    'n_clusters']
-                                gamma_estimated_list.append(config['constant_factor'] * gamma_estimated)
-
-                            # to catch the SVD does not converge error:
-                            except Exception as e:
-                                logger.error(e)
-                                try:  # retrial for SVD computation
-                                    logger.debug("add to check numerical instability")
-                                    l2_norm_b = np.linalg.norm(B + 1e-16 * np.eye(len(B)), 2)
-                                    soft_rank_global = frobi ** 2 / (l2_norm_b ** 2 + 1e-16)
-                                    logger.debug("soft_rank_global", soft_rank_global)
-                                    gamma_estimated = config['beta'] * math.sqrt(
-                                        soft_rank_global) / config['n_clusters']
-                                except Exception as e:
-                                    logger.error(e)
+                            gamma_estimated = gamma_estimated * \
+                                              config[
+                                                  'constant_factor'] * args.beta
 
 
-                                gamma_estimated_list.append(config['constant_factor']*gamma_estimated)
+                            gamma_estimated_list.append(gamma_estimated)
 
                         logger.debug(f"current estimated gamma: {gamma_estimated}")
 
@@ -509,7 +484,7 @@ def train(config):
                         loss_dict['loss_Block'].append(loss_bl.item())
                     loss_per_epoch.append(loss.item())
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= total_wamup_steps:
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -522,11 +497,11 @@ def train(config):
                     scaler.step(optimizerc)
                     scaler.update()
 
-                if epoch == warmup_epochs:
-                    logger.info("Warmup Ends...Start training...")
+                if warmup_step == total_wamup_steps:
+                    print("Warmup Ends...Start training...")
                     model = update_pi_from_z(model)
 
-                if epoch <= warmup_epochs:
+                if warmup_step <= total_wamup_steps:
                     progress_bar.set_postfix(tcr_loss="{:5.4f}".format(loss.item()))
                 else:
                     progress_bar.set_postfix(
@@ -534,18 +509,13 @@ def train(config):
                         exp_loss="{:5.4f}".format(loss_exp.item()),
                         block_loss="{:5.4f}".format(loss_bl.item()),
                     )
+
                 warmup_step += 1
             progress_bar.update(1)
-            if early_stopper.early_stop(np.mean(loss_per_epoch)) and epoch < warmup_epochs:
 
-                warmup_epochs = epoch +  1
-                early_stopper = EarlyStopper(patience=100, min_delta=0.001)
-                early_stop = False
-                logger.info(f"early stopping in epoch {epoch} for warmups")
-            elif epoch > warmup_epochs:
+            if epoch > total_wamup_steps:
                 if early_stopper.early_stop(np.mean(loss_per_epoch)):
                     early_stop = True
-
 
             for k in loss_dict.keys():
                 if len(loss_dict[k]) != 0:
@@ -557,82 +527,95 @@ def train(config):
                 torch.save(model.state_dict(), '{}/checkpoints/model{}.pt'.format(dir_name, epoch))
 
             ### evaluate on test set
-            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo'] or epoch ==warmup_epochs or early_stop:
+            if (epoch + 1) % config['validate_every'] == 0 or (epoch + 1) == config['epo']:
                 print('EVAL on VALIDATE DATASETS')
                 model.eval()
+                t_end = time.time()
                 with torch.no_grad():
                     logits_list = []
+                    z_list = []
                     y_list = []
                     x_list = []
-
                     for step, (x, y) in enumerate(test_loader):
                         x, y = x.float().to(device), y.to(device)
                         y_list.append(y.detach().cpu().numpy())
-                        x_list.append(x.detach().cpu().numpy())
-                        _, logits = model(x)
+                        z, logits = model(x)
                         logits_list.append(logits)
+                        z_list.append(z)
+                        x_list.append(x.detach().cpu().numpy())
 
                     logits = torch.cat(logits_list, dim=0)
+                    z = torch.cat(z_list, dim=0)
 
-                    self_coeff = (logits @ logits.T).abs()
+                    self_coeff = (logits @ logits.T).abs().unsqueeze(0)
+                    Pi = sink_layer(self_coeff)[0]
+                    Pi = Pi * Pi.shape[-1]
+                    self_coeff = Pi[0]
 
-                    y_np = np.concatenate(y_list, axis=0)
                     x_np = np.concatenate(x_list, axis=0)
+                    y_np = np.concatenate(y_list, axis=0)
+                    x_np = np.reshape(x_np, (len(x_np), -1))
+                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_lst = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds(x_np, self_coeff.detach().cpu().numpy(),args.n_clusters, y_np,
+                                                                                                                                                                                            seeds=[config['seed'] ])
 
-                    acc_lst, nmi_lst, pred_lst, ari_lst, sde_lst, si_list, nc_list = spectral_clustering_metrics_with_ari_and_subspace_discovery_error_with_seeds_nc(
-                        x_np, self_coeff.detach().cpu().numpy(), args.n_clusters, y_np,
-                        seeds=[config['seed']])
-                    # evaluate on the silhouette score:
-                    # si_score = silhouette_score(x_np, pred_lst[0]) # since we now set the same seed
-
-                    # A = 0.5 * (self_coeff.abs() + self_coeff.abs().T)
-                    nc = np.mean(nc_list)  # normalized_cut_np(A.detach().cpu().numpy(), y_np)
-
+                    si_score = np.mean(np.asarray(si_lst))
                     writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
 
                     with open('{}/acc.txt'.format(dir_name), 'a') as f:
                         f.write(
-                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}, mean si: {}, max si:{},  epoch {}\n'.format(
+                            'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                                 np.mean(acc_lst), np.max(acc_lst),
                                 np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
-                                np.max(sde_lst), np.mean(si_list), np.max(si_list), epoch))
-                    logger.info(
-                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}, mean si: {}, max si: {} , mean nc: {}, epoch {}\n'.format(
+                                np.max(sde_lst), epoch))
+                    print(
+                        'Logits head mean acc: {} max acc: {} mean nmi: {} max nmi: {}, mean ari: {} max ari: {}, mean sdi: {}, max sdi: {}  epoch {}\n'.format(
                             np.mean(acc_lst), np.max(acc_lst),
                             np.mean(nmi_lst), np.max(nmi_lst), np.mean(ari_lst), np.max(ari_lst), np.mean(sde_lst),
-                            np.max(sde_lst), np.mean(si_list), np.max(si_list), np.mean(nc_list), epoch))
+                            np.max(sde_lst), epoch))
 
                     result_df = pd.concat([result_df, pd.DataFrame.from_records(
-                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch,
-                          'gamma_default': config['gamma'], 'gamma_estimated': gamma,
+                        [{'seq_name': args.data.lower(), 'seed': config['seed'], 'epoch': epoch, 'gamma_default': config['gamma'],
                           'constant_factor': config['constant_factor'],
+                          'gamma_estimated': gamma,
                           'acc': np.mean(acc_lst),
+                          'acc_std': np.std(acc_lst),
                           'nmi': np.mean(nmi_lst),
+                          'nmi_std': np.std(nmi_lst),
                           'ari': np.mean(ari_lst),
+                          'ari_std': np.std(ari_lst),
                           'subspace_discovery_err:': np.mean(sde_lst),
-                          'silhouette_score': np.mean(si_list),
-                          'normalized_cut': np.mean(nc_list),
+                          'subspace_discovery_err_std': np.std(sde_lst),
+                          'silhouette_score': si_score,
+                          'silhouette_score_std': np.std(si_lst),
                           'estimation_mode':estimation_mode,
+                          'time': t_end - t_begin,
                           }])])
+
+                    result_df.to_csv(
+                        '{}/{}_{}.csv'.format(
+                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode='a')
+
+
 
                     if wandb.run:
                         wandb.log({
                             "epoch": epoch,
-                            'seed': config['seed'],
-                          'gamma_default': config['gamma'], 'gamma_estimated': gamma,
-                          'constant_factor': config['constant_factor'],
-                          'acc': np.mean(acc_lst),
-                          'nmi': np.mean(nmi_lst),
-                          'ari': np.mean(ari_lst),
-                          'subspace_discovery_err:': np.mean(sde_lst),
-                          'silhouette_score': np.mean(si_list),
-                          'normalized_cut': np.mean(nc_list),
-                          'estimation_mode':estimation_mode,
-
+                            "acc": np.mean(acc_lst),
+                            "nmi": np.mean(nmi_lst),
+                            "ari": np.mean(ari_lst),
+                            "gamma_default": config['gamma'],
+                            'gamma_estimated': gamma,
+                            "seed": config['seed'],
+                            'subspace_discovery_err:': np.mean(sde_lst),
+                            'silhouette_score': si_score,
+                            'constant_factor': config['constant_factor'],
+                            'estimation_mode': estimation_mode,
                         })
-                    result_df.to_csv(
-                        '{}/{}_{}.csv'.format(
-                            args.out_dir, args.data.lower(), args.experiment_name), index=False, mode = 'a')
+
+                    if early_stop:
+                        print("Early Stopping Ends...")
+                        break
+    return -si_score
 
 
 
@@ -641,7 +624,7 @@ def load_sweep_config():
     parameters_dict = {}
     # trial.suggest_float("constant_factor", 0.005, 2.5, log=True)
     if global_config['end_constant_factor'] <=1:
-        step_size = 0.01
+        step_size = 0.02
     else:
         step_size = 0.1
     gamma_list = np.arange(global_config['start_constant_factor'],global_config['end_constant_factor']+step_size,step_size).tolist()#list(np.linspace(10, 1000, 200))
@@ -654,13 +637,10 @@ def load_sweep_config():
 
 def interface_to_train():
     config = global_config
-    with wandb.init(project="pro_dsc_cifar", config=config):
+    with wandb.init(project="pro_dsc", config=config):
 
         for key in wandb.config.as_dict():
             config[key] = wandb.config.as_dict().get(key)
-
-
-
         train(config)
 
 if __name__ == '__main__':
@@ -669,7 +649,7 @@ if __name__ == '__main__':
     count = 200
 
     if sweep_id == "":
-        sweep_id = wandb.sweep(sweep_config, project="pro_dsc_cifar_10_mcr"+'_'+global_config["experiment_name"])
+        sweep_id = wandb.sweep(sweep_config, project="pro_dsc_"+global_config['data']+'_'+global_config["experiment_name"])
 
     wandb.agent(
         sweep_id,
@@ -677,7 +657,7 @@ if __name__ == '__main__':
         count=count,
     )
     api= wandb.Api()
-    best_run = api.sweep(api.default_entity + "/pro_dsc_cifar/"+sweep_id ).best_run()
+    best_run = api.sweep(api.default_entity + "/pro_dsc/"+global_config['data']).best_run()
     result = {
         "parameters": dict(best_run.config),
         "metrics": dict(best_run.summary._json_dict)
@@ -685,10 +665,3 @@ if __name__ == '__main__':
     print("result to serialize: ", result)
     with open(global_config['out_dir']+"/"+global_config["data"]+'_'+global_config["experiment_name"] + "_"+"best_gamma_sweep_result.json", "w") as f:
         json.dump(result, f, indent=4)
-    # best_run = sweep.best_run()
-    #
-    # best_params = best_run.config
-    # best_metric = best_run.summary
-    #
-    # print("Best parameters:", best_params)
-    # print("Best metric:", best_metric)

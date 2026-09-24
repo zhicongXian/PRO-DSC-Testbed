@@ -552,8 +552,12 @@ def calculate_silhouette_score_point_to_point_subspaace_distance_based(x_np, y_p
         subspace_samples = x_np[y_pred == label]
         # perform svd to calculate bases
 
-        _, basis, _ = estimate_subspace_basis(subspace_samples)
-        basis_dict[label] = basis
+        if len(subspace_samples) <2 :
+            norm = np.linalg.norm(subspace_samples)
+            basis_dict[label] =  (subspace_samples / norm).T
+        else:
+            _, basis, _ = estimate_subspace_basis(subspace_samples)
+            basis_dict[label] = basis
 
     subspace_weighted_distances = equation5_pairwise_distances(x_np, y_pred,basis_dict,normalize=False)
 
@@ -563,12 +567,6 @@ def calculate_silhouette_score_point_to_point_subspaace_distance_based(x_np, y_p
         metric="precomputed",
     )
     return mean_score
-
-
-
-
-
-
 
 def spectral_clustering_metrics_with_projected_subspace_distance(x_np, A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm',
                                 extra_dim=0, tol=0, seeds= [1,2]):
@@ -626,8 +624,6 @@ def spectral_clustering_metrics_with_projected_subspace_distance(x_np, A, nclass
         nc_list.append(nc)
         si_subspace = calculate_silhouette_score_point_to_point_subspaace_distance_based(x_np, pred_label)
         si_subspace_list.append(si_subspace)
-
-
 
         # conn_lst = connectivity_lst(A, label)
 
