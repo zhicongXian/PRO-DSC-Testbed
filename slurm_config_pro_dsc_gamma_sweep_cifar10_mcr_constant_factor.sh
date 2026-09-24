@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 #SBATCH --job-name=pro_dsc_constant_factor_sweep_cifar10_mcr
-#SBATCH --array=0-10
+#SBATCH --array=3-10
 #SBATCH --output=logs_cifar10_mcr_constant_factor_%A_%a.out
 #SBATCH --time=10-00:00:00
 #SBATCH --mem=64G
